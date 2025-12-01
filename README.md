@@ -15,6 +15,8 @@ A simple and fast API gateway service with API key management and TUI monitoring
 - 🖥️ **TUI Monitor**: Terminal-based dashboard for monitoring
 - 🛣️ **Flexible Routing**: Path-based routing with prefix stripping
 - 🌐 **Multiple Servers**: Run multiple gateway servers on different ports, each with its own routes
+- 🔒 **HTTP/HTTPS Support**: Proxy to both HTTP and HTTPS backend targets
+- 🔄 **Hot Reload**: Automatically reload configuration on file changes
 
 ## Installation
 
@@ -52,7 +54,13 @@ Download the latest binary from the [Releases](https://github.com/npv2k1/open-ga
 ./open-gateway start -c config.toml
 ```
 
-5. Or start the TUI monitor:
+5. Or start the gateway with hot reload (auto-reload on config changes):
+
+```bash
+./open-gateway start -c config.toml --watch
+```
+
+6. Or start the TUI monitor:
 
 ```bash
 ./open-gateway monitor -c config.toml
@@ -66,6 +74,9 @@ Download the latest binary from the [Releases](https://github.com/npv2k1/open-ga
 
 # Start the gateway server
 ./open-gateway start -c config.toml
+
+# Start the gateway server with hot reload
+./open-gateway start -c config.toml --watch
 
 # Start the TUI monitor
 ./open-gateway monitor -c config.toml
@@ -163,13 +174,15 @@ Use `[[servers]]` to configure multiple servers. Each server can have its own se
 |--------|-------------|----------|
 | `name` | Route name (for server references) | No |
 | `path` | Path pattern (supports `*` wildcard) | Yes |
-| `target` | Target URL to forward requests | Yes |
+| `target` | Target URL (HTTP or HTTPS) | Yes |
 | `strip_prefix` | Strip matched prefix from path | No (default: false) |
 | `methods` | HTTP methods to match (empty = all) | No |
 | `api_key_pool` | API key pool name to use | No |
 | `headers` | Additional headers to add | No |
 | `description` | Route description | No |
 | `enabled` | Whether route is enabled | No (default: true) |
+
+**Note:** The `target` field supports both `http://` and `https://` URLs for proxying to HTTP or HTTPS backends.
 
 #### API Key Pools
 

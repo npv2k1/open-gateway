@@ -18,6 +18,7 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 hyper = { version = "1.5", features = ["full"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"] }
+hyper-tls = "0.6"
 http-body-util = "0.1"
 bytes = "1.0"
 
@@ -36,6 +37,9 @@ clap = { version = "4.4", features = ["derive"] }
 
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }
+
+# File watching
+notify = "8.0"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

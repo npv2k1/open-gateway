@@ -1,6 +1,10 @@
 # Open Gateway Configuration
 # This configuration shows both single-server (backward compatible) and
 # multi-server configurations. Use either `[server]` OR `[[servers]]`.
+#
+# Features:
+# - HTTP and HTTPS target support
+# - Hot reload: use `--watch` flag to auto-reload on config changes
 
 # Option 1: Single server configuration (backward compatible)
 # [server]
@@ -36,10 +40,11 @@ path = "/health"
 
 # Route configurations
 # Routes can have a `name` field to be referenced by servers
+# Target can be HTTP or HTTPS URLs
 [[routes]]
 name = "api-v1"
 path = "/api/v1/*"
-target = "http://localhost:3001"
+target = "http://localhost:3001"  # HTTP target
 strip_prefix = true
 methods = ["GET", "POST", "PUT", "DELETE"]
 api_key_pool = "default"
@@ -49,9 +54,9 @@ enabled = true
 [[routes]]
 name = "api-v2"
 path = "/api/v2/*"
-target = "http://localhost:3002"
+target = "https://api.example.com"  # HTTPS target
 strip_prefix = true
-description = "API v2 routes"
+description = "API v2 routes (HTTPS)"
 enabled = true
 
 [[routes]]
