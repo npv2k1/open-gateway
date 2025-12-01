@@ -1,0 +1,49 @@
+# Open Gateway Configuration
+
+[server]
+host = "0.0.0.0"
+port = 8080
+timeout = 30
+
+[metrics]
+enabled = true
+path = "/metrics"
+
+[health]
+enabled = true
+path = "/health"
+
+# Route configurations
+[[routes]]
+path = "/api/v1/*"
+target = "http://localhost:3001"
+strip_prefix = true
+methods = ["GET", "POST", "PUT", "DELETE"]
+api_key_pool = "default"
+description = "API v1 routes"
+enabled = true
+
+[[routes]]
+path = "/api/v2/*"
+target = "http://localhost:3002"
+strip_prefix = true
+description = "API v2 routes"
+enabled = true
+
+# API Key Pools
+[api_key_pools.default]
+strategy = "round_robin"  # Options: round_robin, random, weight
+header_name = "X-API-Key"
+keys = [
+    { key = "api-key-1", weight = 1, enabled = true },
+    { key = "api-key-2", weight = 2, enabled = true },
+    { key = "api-key-3", weight = 1, enabled = true },
+]
+
+[api_key_pools.openai]
+strategy = "weight"
+header_name = "Authorization"
+keys = [
+    { key = "Bearer sk-key-1", weight = 3, enabled = true },
+    { key = "Bearer sk-key-2", weight = 1, enabled = true },
+]

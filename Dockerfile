@@ -15,8 +15,6 @@ COPY Cargo.toml Cargo.lock ./
 
 # Copy source code
 COPY src ./src
-COPY examples ./examples
-COPY tests ./tests
 
 # Build the application in release mode
 RUN cargo build --release
@@ -36,7 +34,7 @@ RUN useradd -m -u 1000 appuser
 WORKDIR /app
 
 # Copy the binary from builder
-COPY --from=builder /app/target/release/template-rust /usr/local/bin/template-rust
+COPY --from=builder /app/target/release/open-gateway /usr/local/bin/open-gateway
 
 # Change ownership
 RUN chown -R appuser:appuser /app
@@ -44,15 +42,12 @@ RUN chown -R appuser:appuser /app
 # Switch to non-root user
 USER appuser
 
-# Set default database path
-ENV DATABASE_URL=/app/data/todo.db
+# Create config directory
+RUN mkdir -p /app/config
 
-# Create data directory
-RUN mkdir -p /app/data
-
-# Expose any necessary ports (if needed for future web features)
-# EXPOSE 8080
+# Expose the gateway port
+EXPOSE 8080
 
 # Set the default command
-ENTRYPOINT ["template-rust"]
+ENTRYPOINT ["open-gateway"]
 CMD ["--help"]

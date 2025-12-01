@@ -1,152 +1,214 @@
-# Template Rust
+# Open Gateway
 
-A Rust project template featuring a todo application with SQLite database and terminal user interface (TUI).
+A simple and fast API gateway service with API key management and TUI monitoring.
 
 ## Features
 
-- 📝 Todo management with SQLite persistence
-- 🖥️ Interactive Terminal User Interface (TUI)
-- 🔧 Command Line Interface (CLI)
-- 🧪 Comprehensive test suite
-- 🚀 CI/CD with GitHub Actions
-- 📦 Cross-platform releases
-- 🔒 Security auditing
-- 🐳 Docker and Docker Compose support
-- ❄️ Nix flakes for reproducible environments
-- 📦 Devcontainer configuration for GitHub Codespaces
+- 🚀 **High Performance**: Built with Rust and Axum for optimal performance
+- 🔧 **TOML Configuration**: Easy-to-read configuration files
+- 🔑 **API Key Pool Management**: Support for multiple API key selection strategies
+  - Round Robin
+  - Random
+  - Weighted
+- 📊 **Prometheus Metrics**: Built-in metrics endpoint for monitoring
+- ❤️ **Health Checks**: Liveness and readiness endpoints
+- 🖥️ **TUI Monitor**: Terminal-based dashboard for monitoring
+- 🛣️ **Flexible Routing**: Path-based routing with prefix stripping
 
 ## Installation
-
-> **💡 Quick Start**: See [SETUP.md](SETUP.md) for detailed setup instructions using Docker, Nix, Codespaces, or local development.
 
 ### From Source
 
 ```bash
-git clone https://github.com/pnstack/template-rust.git
-cd template-rust
+git clone https://github.com/npv2k1/open-gateway.git
+cd open-gateway
 cargo build --release
 ```
 
 ### From Releases
 
-Download the latest binary from the [Releases](https://github.com/pnstack/template-rust/releases) page.
+Download the latest binary from the [Releases](https://github.com/npv2k1/open-gateway/releases) page.
 
-### With Docker
+## Quick Start
 
-```bash
-# Build the image
-docker build -t template-rust:latest .
-
-# Run with interactive TUI
-docker run --rm -it -v $(pwd)/data:/app/data template-rust:latest tui
-
-# Or use Docker Compose
-docker compose up
-```
-
-### With Nix
+1. Generate a sample configuration file:
 
 ```bash
-# Enter development environment
-nix develop
-
-# Or run directly
-nix run
+./open-gateway init -o config.toml
 ```
 
-### With GitHub Codespaces
+2. Edit the configuration file to match your needs.
 
-Click the "Code" button on GitHub and select "Create codespace on main" - everything is pre-configured!
+3. Validate the configuration:
 
-## Usage
+```bash
+./open-gateway validate -c config.toml
+```
 
-### Command Line Interface
+4. Start the gateway:
+
+```bash
+./open-gateway start -c config.toml
+```
+
+5. Or start the TUI monitor:
+
+```bash
+./open-gateway monitor -c config.toml
+```
+
+## CLI Commands
 
 ```bash
 # Show help
-./template-rust --help
+./open-gateway --help
 
-# Add a new todo
-./template-rust add "Buy groceries" --description "Milk, eggs, bread"
+# Start the gateway server
+./open-gateway start -c config.toml
 
-# List all todos
-./template-rust list
+# Start the TUI monitor
+./open-gateway monitor -c config.toml
 
-# List only completed todos
-./template-rust list --completed
+# Validate configuration
+./open-gateway validate -c config.toml
 
-# List only pending todos
-./template-rust list --pending
-
-# Complete a todo (use the ID from list command)
-./template-rust complete <todo-id>
-
-# Delete a todo
-./template-rust delete <todo-id>
-
-# Start interactive TUI (default mode)
-./template-rust tui
+# Generate sample configuration
+./open-gateway init -o config.toml
 ```
 
-### Terminal User Interface (TUI)
+## Configuration
 
-Start the interactive mode:
+Open Gateway uses TOML configuration files. Here's an example:
 
-```bash
-./template-rust tui
+```toml
+# Server configuration
+[server]
+host = "0.0.0.0"
+port = 8080
+timeout = 30
+
+# Metrics configuration
+[metrics]
+enabled = true
+path = "/metrics"
+
+# Health check configuration
+[health]
+enabled = true
+path = "/health"
+
+# Route configurations
+[[routes]]
+path = "/api/v1/*"
+target = "http://localhost:3001"
+strip_prefix = true
+methods = ["GET", "POST", "PUT", "DELETE"]
+api_key_pool = "default"
+description = "API v1 routes"
+enabled = true
+
+# API Key Pools
+[api_key_pools.default]
+strategy = "round_robin"  # Options: round_robin, random, weight
+header_name = "X-API-Key"
+keys = [
+    { key = "api-key-1", weight = 1, enabled = true },
+    { key = "api-key-2", weight = 2, enabled = true },
+]
 ```
 
-#### TUI Commands:
-- `h` - Show help
-- `n` - Add new todo
-- `d` - Delete selected todo
-- `c` - Toggle todo completion status
-- `a` - Show all todos
-- `p` - Show pending todos only
-- `f` - Show completed todos only
-- `↑↓` - Navigate todos
-- `q` - Quit application
+### Configuration Options
 
-## Project Structure
+#### Server
 
+| Option | Description | Default |
+|--------|-------------|---------|
+| `host` | Host to bind to | `0.0.0.0` |
+| `port` | Port to bind to | `8080` |
+| `timeout` | Request timeout in seconds | `30` |
+
+#### Routes
+
+| Option | Description | Required |
+|--------|-------------|----------|
+| `path` | Path pattern (supports `*` wildcard) | Yes |
+| `target` | Target URL to forward requests | Yes |
+| `strip_prefix` | Strip matched prefix from path | No (default: false) |
+| `methods` | HTTP methods to match (empty = all) | No |
+| `api_key_pool` | API key pool name to use | No |
+| `headers` | Additional headers to add | No |
+| `description` | Route description | No |
+| `enabled` | Whether route is enabled | No (default: true) |
+
+#### API Key Pools
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `strategy` | Selection strategy | `round_robin` |
+| `header_name` | Header name for API key | `Authorization` |
+| `keys` | List of API keys | Required |
+
+##### API Key Configuration
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `key` | The API key value | Required |
+| `weight` | Weight for weighted selection | `1` |
+| `enabled` | Whether key is enabled | `true` |
+
+## Metrics
+
+The gateway exposes Prometheus metrics at the `/metrics` endpoint (configurable):
+
+- `gateway_requests_total`: Total number of requests (labels: method, path, status)
+- `gateway_request_latency_seconds`: Request latency histogram (labels: method, path)
+- `gateway_active_connections`: Number of active connections (labels: route)
+
+## Health Checks
+
+The gateway provides health check endpoints:
+
+- `GET /health`: Returns health status in JSON format
+
+```json
+{
+  "status": "healthy",
+  "version": "0.1.0",
+  "uptime_seconds": 3600
+}
 ```
-template-rust/
-├── .github/workflows/    # CI/CD workflows
-├── src/
-│   ├── database/         # Database layer
-│   ├── models/           # Data models
-│   ├── tui/              # Terminal UI
-│   ├── lib.rs            # Library root
-│   └── main.rs           # CLI application
-├── tests/                # Integration tests
-├── docs/                 # Documentation
-└── examples/             # Usage examples
-```
+
+## TUI Monitor
+
+The TUI monitor provides a terminal-based dashboard with:
+
+- **Overview Tab**: Metrics summary and health status
+- **Routes Tab**: List of configured routes with details
+- **Config Tab**: Current configuration overview
+- **Help Tab**: Keyboard shortcuts and documentation
+
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `→` | Next tab |
+| `Shift+Tab` / `←` | Previous tab |
+| `1-4` | Jump to tab |
+| `h` | Help tab |
+| `↑` / `k` | Previous route (in Routes tab) |
+| `↓` / `j` | Next route (in Routes tab) |
+| `q` / `Esc` | Quit |
 
 ## Development
 
-> **📚 Full Setup Guide**: See [SETUP.md](SETUP.md) for comprehensive development environment setup instructions.
-
 ### Prerequisites
 
-Choose your preferred development method:
-
-- **Local**: Rust 1.70 or later, SQLite3
-- **Docker**: Docker 20.10+ and Docker Compose
-- **Nix**: Nix package manager with flakes enabled
-- **Codespaces**: Just a GitHub account!
+- Rust 1.70 or later
 
 ### Building
 
 ```bash
-# Local
 cargo build
-
-# Docker
-docker compose up --build
-
-# Nix
-nix build
 ```
 
 ### Running Tests
@@ -166,49 +228,6 @@ cargo clippy -- -D warnings
 ```bash
 cargo fmt
 ```
-
-### Development Environments
-
-The project provides multiple development environment options:
-
-- **Docker Compose**: `docker compose up dev` - Containerized development with live code mounting
-- **Nix Flakes**: `nix develop` - Reproducible environment with all dependencies
-- **Devcontainer**: Open in VS Code or GitHub Codespaces - Fully configured IDE
-- **Traditional**: Local Rust installation with cargo
-
-## Database
-
-The application uses SQLite for persistence. By default, it creates a `todo.db` file in the current directory. You can specify a different database path:
-
-```bash
-./template-rust --database /path/to/your/todos.db list
-```
-
-For testing with in-memory database:
-
-```bash
-./template-rust --database ":memory:" add "Test todo"
-```
-
-## CI/CD
-
-The project includes comprehensive GitHub Actions workflows:
-
-- **CI** (`ci.yml`): Build, test, lint, and format checks on multiple platforms (Linux, macOS, Windows)
-- **Security** (`security.yml`): Weekly security audits with `cargo audit`
-- **Release** (`release.yml`): Automated binary releases for Linux, macOS, and Windows on version tags
-- **Docker** (`docker.yml`): Docker image build testing and docker-compose validation
-
-All workflows run automatically on push and pull requests to ensure code quality and security.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Ensure all tests pass
-6. Submit a pull request
 
 ## License
 

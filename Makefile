@@ -30,11 +30,23 @@ fmt-check: ## Check code formatting
 clean: ## Clean build artifacts
 	cargo clean
 
-docker-build: ## Build Docker image
-	docker build -t template-rust:latest .
+run: ## Run the gateway with example config
+	cargo run -- start -c config.example.toml
 
-docker-run: ## Run Docker container in TUI mode
-	docker run --rm -it -v $(PWD)/data:/app/data template-rust:latest tui
+monitor: ## Start TUI monitor with example config
+	cargo run -- monitor -c config.example.toml
+
+init: ## Generate sample configuration
+	cargo run -- init -o config.toml
+
+validate: ## Validate example configuration
+	cargo run -- validate -c config.example.toml
+
+docker-build: ## Build Docker image
+	docker build -t open-gateway:latest .
+
+docker-run: ## Run Docker container
+	docker run --rm -it -p 8080:8080 -v $(PWD)/config:/app/config:ro open-gateway:latest start -c /app/config/config.toml
 
 docker-compose-up: ## Start services with docker-compose
 	docker compose up

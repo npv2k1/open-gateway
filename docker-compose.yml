@@ -1,24 +1,17 @@
 services:
-  template-rust:
+  open-gateway:
     build:
       context: .
       dockerfile: Dockerfile
-    image: template-rust:latest
-    container_name: template-rust-app
+    image: open-gateway:latest
+    container_name: open-gateway
     volumes:
-      # Mount data directory for persistent storage
-      - ./data:/app/data
-    environment:
-      # Override database path if needed
-      - DATABASE_URL=/app/data/todo.db
-    # Uncomment if you add a web server
-    # ports:
-    #   - "8080:8080"
-    stdin_open: true
-    tty: true
-    # Override entrypoint for interactive TUI mode
-    entrypoint: ["template-rust"]
-    command: ["tui"]
+      # Mount config directory
+      - ./config:/app/config:ro
+    ports:
+      - "8080:8080"
+    entrypoint: ["open-gateway"]
+    command: ["start", "-c", "/app/config/config.toml"]
     restart: unless-stopped
 
   # Development service with live code mounting
@@ -27,19 +20,20 @@ services:
       context: .
       dockerfile: Dockerfile
       target: builder
-    image: template-rust:dev
-    container_name: template-rust-dev
+    image: open-gateway:dev
+    container_name: open-gateway-dev
     volumes:
       - .:/app
       - cargo-cache:/usr/local/cargo/registry
       - target-cache:/app/target
     working_dir: /app
+    ports:
+      - "8080:8080"
     environment:
-      - DATABASE_URL=/app/todo.db
       - RUST_BACKTRACE=1
     stdin_open: true
     tty: true
-    command: ["cargo", "run", "--", "tui"]
+    command: ["cargo", "run", "--", "start", "-c", "config.example.toml"]
 
 volumes:
   cargo-cache:
