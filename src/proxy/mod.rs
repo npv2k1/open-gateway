@@ -31,6 +31,8 @@ pub struct ProxyService {
 /// A compiled proxy route with its selector
 #[derive(Clone)]
 pub struct ProxyRoute {
+    /// Route name (optional)
+    pub name: Option<String>,
     /// Path pattern
     pub path_pattern: String,
     /// Target URL
@@ -154,6 +156,7 @@ impl ProxyService {
                     .and_then(|name| api_key_selectors.get(name).cloned());
 
                 ProxyRoute {
+                    name: route.name.clone(),
                     path_pattern: route.path.clone(),
                     target: route.target.clone(),
                     strip_prefix: route.strip_prefix,
@@ -216,8 +219,9 @@ impl ProxyService {
             // Inject API key if configured
             if let Some(selector) = &route.api_key_selector {
                 if let Some(api_key) = selector.get_key() {
-                    if let Ok(header_name) =
-                        selector.header_name.parse::<axum::http::header::HeaderName>()
+                    if let Ok(header_name) = selector
+                        .header_name
+                        .parse::<axum::http::header::HeaderName>()
                     {
                         if let Ok(header_value) = api_key.parse::<axum::http::header::HeaderValue>()
                         {
@@ -312,6 +316,7 @@ mod tests {
 
     fn create_test_route() -> ProxyRoute {
         ProxyRoute {
+            name: None,
             path_pattern: "/api/*".to_string(),
             target: "http://localhost:8081".to_string(),
             strip_prefix: true,

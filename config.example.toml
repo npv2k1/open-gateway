@@ -1,9 +1,30 @@
 # Open Gateway Configuration
+# This configuration shows both single-server (backward compatible) and
+# multi-server configurations. Use either `[server]` OR `[[servers]]`.
 
-[server]
+# Option 1: Single server configuration (backward compatible)
+# [server]
+# host = "0.0.0.0"
+# port = 8080
+# timeout = 30
+
+# Option 2: Multiple servers configuration
+# Each server can have its own routes. If no routes are specified,
+# all enabled routes are used for that server.
+
+[[servers]]
+name = "api-server"
 host = "0.0.0.0"
 port = 8080
 timeout = 30
+routes = ["api-v1", "api-v2"]  # Reference routes by name or path
+
+[[servers]]
+name = "admin-server"
+host = "0.0.0.0"
+port = 9090
+timeout = 30
+# No routes specified - uses all enabled routes
 
 [metrics]
 enabled = true
@@ -14,7 +35,9 @@ enabled = true
 path = "/health"
 
 # Route configurations
+# Routes can have a `name` field to be referenced by servers
 [[routes]]
+name = "api-v1"
 path = "/api/v1/*"
 target = "http://localhost:3001"
 strip_prefix = true
@@ -24,10 +47,19 @@ description = "API v1 routes"
 enabled = true
 
 [[routes]]
+name = "api-v2"
 path = "/api/v2/*"
 target = "http://localhost:3002"
 strip_prefix = true
 description = "API v2 routes"
+enabled = true
+
+[[routes]]
+name = "admin"
+path = "/admin/*"
+target = "http://localhost:4000"
+strip_prefix = true
+description = "Admin routes"
 enabled = true
 
 # API Key Pools

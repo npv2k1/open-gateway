@@ -110,47 +110,82 @@ async fn start_server(config_path: &str) -> anyhow::Result<()> {
         .map(|(name, pool)| (name.clone(), create_selector(pool)))
         .collect();
 
-    // Create metrics
+    // Create shared metrics
     let metrics = Arc::new(GatewayMetrics::new());
 
-    // Create health checker
+    // Create shared health checker
     let health = Arc::new(HealthChecker::new());
 
-    // Create proxy routes
-    let proxy_routes = ProxyService::routes_from_config(&config.routes, &api_key_selectors);
-    let proxy = Arc::new(ProxyService::new(proxy_routes, metrics.clone()));
-
-    // Create app state
-    let state = AppState {
-        proxy,
-        metrics: metrics.clone(),
-        health: health.clone(),
-        config: config.clone(),
-    };
-
-    // Build router
-    let app = Router::new()
-        .route(&config.health.path, get(health_handler))
-        .route(&config.metrics.path, get(metrics_handler))
-        .fallback(proxy_handler)
-        .layer(TraceLayer::new_for_http())
-        .with_state(state);
-
-    if config.health.enabled {
-        info!("Health endpoint enabled at {}", config.health.path);
-    }
-    if config.metrics.enabled {
-        info!("Metrics endpoint enabled at {}", config.metrics.path);
-    }
-
-    // Start server
-    let addr: SocketAddr = config.server_addr().parse()?;
-    info!("Starting gateway server on {}", addr);
+    // Get all servers to start
+    let servers = config.get_servers();
+    info!("Starting {} server(s)", servers.len());
     info!("Routes configured: {}", config.routes.len());
     info!("API key pools configured: {}", config.api_key_pools.len());
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app.into_make_service()).await?;
+    // Spawn a task for each server
+    let mut handles = Vec::new();
+
+    for server in servers {
+        // Get routes for this server
+        let server_routes: Vec<_> = config
+            .routes_for_server(server)
+            .into_iter()
+            .cloned()
+            .collect();
+
+        let proxy_routes = ProxyService::routes_from_config(&server_routes, &api_key_selectors);
+        let proxy = Arc::new(ProxyService::new(proxy_routes, metrics.clone()));
+
+        // Create app state for this server
+        let state = AppState {
+            proxy,
+            metrics: metrics.clone(),
+            health: health.clone(),
+            config: config.clone(),
+        };
+
+        // Build router
+        let app = Router::new()
+            .route(&config.health.path, get(health_handler))
+            .route(&config.metrics.path, get(metrics_handler))
+            .fallback(proxy_handler)
+            .layer(TraceLayer::new_for_http())
+            .with_state(state);
+
+        // Get server address
+        let addr: SocketAddr = GatewayConfig::server_addr_for(server).parse()?;
+        let server_name = server
+            .name
+            .clone()
+            .unwrap_or_else(|| format!("{}:{}", server.host, server.port));
+
+        info!(
+            "Starting server '{}' on {} with {} route(s)",
+            server_name,
+            addr,
+            server_routes.len()
+        );
+
+        if config.health.enabled {
+            info!("  Health endpoint at {}", config.health.path);
+        }
+        if config.metrics.enabled {
+            info!("  Metrics endpoint at {}", config.metrics.path);
+        }
+
+        // Spawn the server task
+        let handle = tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            axum::serve(listener, app.into_make_service()).await?;
+            Ok::<(), anyhow::Error>(())
+        });
+        handles.push(handle);
+    }
+
+    // Wait for all servers (in practice, they run forever unless there's an error)
+    for handle in handles {
+        handle.await??;
+    }
 
     Ok(())
 }
@@ -189,24 +224,38 @@ fn validate_config(config_path: &str) -> anyhow::Result<()> {
         Ok(config) => {
             println!("✓ Configuration is valid!");
             println!();
-            println!("Server: {}:{}", config.server.host, config.server.port);
-            println!("Routes: {}", config.routes.len());
-            println!("API Key Pools: {}", config.api_key_pools.len());
-            println!();
-            println!("Routes:");
-            for route in &config.routes {
-                let status = if route.enabled { "✓" } else { "✗" };
-                println!("  {} {} → {}", status, route.path, route.target);
+
+            // Display servers
+            let servers = config.get_servers();
+            println!("Servers: {}", servers.len());
+            for server in &servers {
+                let name = server
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| format!("{}:{}", server.host, server.port));
+                let route_count = config.routes_for_server(server).len();
+                println!(
+                    "  {} ({}:{}) - {} route(s)",
+                    name, server.host, server.port, route_count
+                );
             }
             println!();
-            println!("API Key Pools:");
+
+            println!("Routes: {}", config.routes.len());
+            for route in &config.routes {
+                let status = if route.enabled { "✓" } else { "✗" };
+                let name = route
+                    .name
+                    .clone()
+                    .map(|n| format!("[{}] ", n))
+                    .unwrap_or_default();
+                println!("  {} {}{} → {}", status, name, route.path, route.target);
+            }
+            println!();
+
+            println!("API Key Pools: {}", config.api_key_pools.len());
             for (name, pool) in &config.api_key_pools {
-                println!(
-                    "  {} ({:?}, {} keys)",
-                    name,
-                    pool.strategy,
-                    pool.keys.len()
-                );
+                println!("  {} ({:?}, {} keys)", name, pool.strategy, pool.keys.len());
             }
             Ok(())
         }
@@ -221,11 +270,32 @@ fn validate_config(config_path: &str) -> anyhow::Result<()> {
 /// Generate sample configuration file
 fn generate_sample_config(output_path: &str) -> anyhow::Result<()> {
     let sample_config = r#"# Open Gateway Configuration
+# This configuration shows both single-server (backward compatible) and
+# multi-server configurations. Use either `[server]` OR `[[servers]]`.
 
-[server]
+# Option 1: Single server configuration (backward compatible)
+# [server]
+# host = "0.0.0.0"
+# port = 8080
+# timeout = 30
+
+# Option 2: Multiple servers configuration
+# Each server can have its own routes. If no routes are specified,
+# all enabled routes are used for that server.
+
+[[servers]]
+name = "api-server"
 host = "0.0.0.0"
 port = 8080
 timeout = 30
+routes = ["api-v1", "api-v2"]  # Reference routes by name or path
+
+[[servers]]
+name = "admin-server"
+host = "0.0.0.0"
+port = 9090
+timeout = 30
+# No routes specified - uses all enabled routes
 
 [metrics]
 enabled = true
@@ -236,7 +306,9 @@ enabled = true
 path = "/health"
 
 # Route configurations
+# Routes can have a `name` field to be referenced by servers
 [[routes]]
+name = "api-v1"
 path = "/api/v1/*"
 target = "http://localhost:3001"
 strip_prefix = true
@@ -246,10 +318,19 @@ description = "API v1 routes"
 enabled = true
 
 [[routes]]
+name = "api-v2"
 path = "/api/v2/*"
 target = "http://localhost:3002"
 strip_prefix = true
 description = "API v2 routes"
+enabled = true
+
+[[routes]]
+name = "admin"
+path = "/admin/*"
+target = "http://localhost:4000"
+strip_prefix = true
+description = "Admin routes"
 enabled = true
 
 # API Key Pools
@@ -296,10 +377,7 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Proxy handler - forwards requests to target services
-async fn proxy_handler(
-    State(state): State<AppState>,
-    req: Request<Body>,
-) -> impl IntoResponse {
+async fn proxy_handler(State(state): State<AppState>, req: Request<Body>) -> impl IntoResponse {
     match state.proxy.forward(req).await {
         Ok(response) => response.into_response(),
         Err((status, message)) => (status, message).into_response(),

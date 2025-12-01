@@ -62,6 +62,9 @@ fn default_header_name() -> String {
 /// Route configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteConfig {
+    /// Route name (optional, for referencing from servers)
+    #[serde(default)]
+    pub name: Option<String>,
     /// Path pattern to match (e.g., "/api/v1/*")
     pub path: String,
     /// Target URL to forward requests to
@@ -87,6 +90,9 @@ pub struct RouteConfig {
 /// Server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
+    /// Server name (optional, for display purposes)
+    #[serde(default)]
+    pub name: Option<String>,
     /// Host to bind to
     #[serde(default = "default_host")]
     pub host: String,
@@ -96,6 +102,9 @@ pub struct ServerConfig {
     /// Request timeout in seconds
     #[serde(default = "default_timeout")]
     pub timeout: u64,
+    /// Routes associated with this server (optional, if not set uses global routes)
+    #[serde(default)]
+    pub routes: Vec<String>,
 }
 
 fn default_host() -> String {
@@ -113,9 +122,11 @@ fn default_timeout() -> u64 {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
+            name: None,
             host: default_host(),
             port: default_port(),
             timeout: default_timeout(),
+            routes: vec![],
         }
     }
 }
@@ -171,9 +182,12 @@ impl Default for HealthConfig {
 /// Main gateway configuration
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GatewayConfig {
-    /// Server configuration
+    /// Single server configuration (for backward compatibility)
     #[serde(default)]
     pub server: ServerConfig,
+    /// Multiple servers configuration
+    #[serde(default)]
+    pub servers: Vec<ServerConfig>,
     /// Metrics configuration
     #[serde(default)]
     pub metrics: MetricsConfig,
@@ -227,6 +241,25 @@ impl GatewayConfig {
             }
         }
 
+        // Check that servers reference valid routes
+        for server in &self.servers {
+            for route_ref in &server.routes {
+                let route_exists = self.routes.iter().any(|r| {
+                    r.name.as_ref().map(|n| n == route_ref).unwrap_or(false) || r.path == *route_ref
+                });
+                if !route_exists {
+                    anyhow::bail!(
+                        "Server '{}' references unknown route '{}'",
+                        server
+                            .name
+                            .as_deref()
+                            .unwrap_or(&format!("{}:{}", server.host, server.port)),
+                        route_ref
+                    );
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -238,6 +271,41 @@ impl GatewayConfig {
     /// Get enabled routes
     pub fn enabled_routes(&self) -> Vec<&RouteConfig> {
         self.routes.iter().filter(|r| r.enabled).collect()
+    }
+
+    /// Get all configured servers (returns either `servers` list or a single-item list with `server`)
+    pub fn get_servers(&self) -> Vec<&ServerConfig> {
+        if !self.servers.is_empty() {
+            self.servers.iter().collect()
+        } else {
+            vec![&self.server]
+        }
+    }
+
+    /// Get routes for a specific server
+    /// If the server has no routes specified, returns all enabled routes
+    pub fn routes_for_server(&self, server: &ServerConfig) -> Vec<&RouteConfig> {
+        if server.routes.is_empty() {
+            // No specific routes - use all enabled routes
+            self.enabled_routes()
+        } else {
+            // Filter routes by the server's route references
+            self.routes
+                .iter()
+                .filter(|r| {
+                    r.enabled
+                        && server.routes.iter().any(|route_ref| {
+                            r.name.as_ref().map(|n| n == route_ref).unwrap_or(false)
+                                || r.path == *route_ref
+                        })
+                })
+                .collect()
+        }
+    }
+
+    /// Get server address for a specific server
+    pub fn server_addr_for(server: &ServerConfig) -> String {
+        format!("{}:{}", server.host, server.port)
     }
 }
 
@@ -306,5 +374,129 @@ api_key_pool = "nonexistent"
 
         let result = GatewayConfig::parse(toml);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_multiple_servers_config() {
+        let toml = r#"
+[metrics]
+enabled = true
+path = "/metrics"
+
+[health]
+enabled = true
+path = "/health"
+
+[[servers]]
+name = "api-server"
+host = "0.0.0.0"
+port = 8080
+routes = ["api-v1"]
+
+[[servers]]
+name = "admin-server"
+host = "0.0.0.0"
+port = 9090
+routes = ["admin"]
+
+[[routes]]
+name = "api-v1"
+path = "/api/v1/*"
+target = "http://localhost:3001"
+strip_prefix = true
+description = "API v1 routes"
+enabled = true
+
+[[routes]]
+name = "admin"
+path = "/admin/*"
+target = "http://localhost:3002"
+strip_prefix = true
+description = "Admin routes"
+enabled = true
+"#;
+
+        let config = GatewayConfig::parse(toml).unwrap();
+        assert_eq!(config.servers.len(), 2);
+        assert_eq!(config.servers[0].name, Some("api-server".to_string()));
+        assert_eq!(config.servers[0].port, 8080);
+        assert_eq!(config.servers[1].name, Some("admin-server".to_string()));
+        assert_eq!(config.servers[1].port, 9090);
+        assert_eq!(config.routes.len(), 2);
+
+        // Test get_servers
+        let servers = config.get_servers();
+        assert_eq!(servers.len(), 2);
+
+        // Test routes_for_server
+        let api_routes = config.routes_for_server(&config.servers[0]);
+        assert_eq!(api_routes.len(), 1);
+        assert_eq!(api_routes[0].path, "/api/v1/*");
+
+        let admin_routes = config.routes_for_server(&config.servers[1]);
+        assert_eq!(admin_routes.len(), 1);
+        assert_eq!(admin_routes[0].path, "/admin/*");
+    }
+
+    #[test]
+    fn test_server_with_all_routes() {
+        let toml = r#"
+[[servers]]
+name = "main-server"
+host = "0.0.0.0"
+port = 8080
+# No routes specified - should use all enabled routes
+
+[[routes]]
+path = "/api/v1/*"
+target = "http://localhost:3001"
+
+[[routes]]
+path = "/api/v2/*"
+target = "http://localhost:3002"
+"#;
+
+        let config = GatewayConfig::parse(toml).unwrap();
+        let routes = config.routes_for_server(&config.servers[0]);
+        assert_eq!(routes.len(), 2);
+    }
+
+    #[test]
+    fn test_invalid_server_route_reference() {
+        let toml = r#"
+[[servers]]
+name = "main-server"
+host = "0.0.0.0"
+port = 8080
+routes = ["nonexistent-route"]
+
+[[routes]]
+name = "api-v1"
+path = "/api/v1/*"
+target = "http://localhost:3001"
+"#;
+
+        let result = GatewayConfig::parse(toml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_backward_compatibility_single_server() {
+        let toml = r#"
+[server]
+host = "127.0.0.1"
+port = 3000
+
+[[routes]]
+path = "/api/*"
+target = "http://localhost:8081"
+"#;
+
+        let config = GatewayConfig::parse(toml).unwrap();
+        // Should fall back to single server config
+        let servers = config.get_servers();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].host, "127.0.0.1");
+        assert_eq!(servers[0].port, 3000);
     }
 }

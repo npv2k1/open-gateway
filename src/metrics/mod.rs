@@ -36,10 +36,13 @@ impl GatewayMetrics {
         .expect("Failed to create request counter");
 
         let request_latency = HistogramVec::new(
-            HistogramOpts::new("gateway_request_latency_seconds", "Request latency in seconds")
-                .buckets(vec![
-                    0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
-                ]),
+            HistogramOpts::new(
+                "gateway_request_latency_seconds",
+                "Request latency in seconds",
+            )
+            .buckets(vec![
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+            ]),
             &["method", "path"],
         )
         .expect("Failed to create latency histogram");
@@ -217,7 +220,10 @@ mod tests {
 
     #[test]
     fn test_normalize_path() {
-        assert_eq!(GatewayMetrics::normalize_path("/api/users/123"), "/api/users/:id");
+        assert_eq!(
+            GatewayMetrics::normalize_path("/api/users/123"),
+            "/api/users/:id"
+        );
         assert_eq!(
             GatewayMetrics::normalize_path("/api/users/abc123def456"),
             "/api/users/:uuid"
