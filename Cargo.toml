@@ -58,5 +58,11 @@ thiserror = "1.0"
 # Metrics
 prometheus = "0.13"
 
+# Unix system calls
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3.0"
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+serde_json = "1.0"
