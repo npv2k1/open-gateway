@@ -143,11 +143,16 @@ async fn start_server(config_path: &str, watch_config: bool) -> anyhow::Result<(
                 if watch_config {
                     warn!("Waiting for config change to retry...");
                     // Wait for config change before retrying
-                    let _ = shutdown_rx.changed().await;
-                    if *shutdown_rx.borrow() {
-                        let _ = shutdown_tx.send(false);
-                        continue;
+                    loop {
+                        if shutdown_rx.changed().await.is_err() {
+                            return Err(e);
+                        }
+                        if *shutdown_rx.borrow() {
+                            let _ = shutdown_tx.send(false);
+                            break;
+                        }
                     }
+                    continue;
                 }
                 return Err(e);
             }
@@ -161,11 +166,18 @@ async fn start_server(config_path: &str, watch_config: bool) -> anyhow::Result<(
 async fn watch_config_file(config_path: &str, shutdown_tx: watch::Sender<bool>) {
     let path = Path::new(config_path);
     let parent_dir = path.parent().unwrap_or(Path::new("."));
+    let config_file_name = path
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("")
+        .to_string();
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Event, notify::Error>>(10);
 
     let mut watcher = match notify::recommended_watcher(move |res| {
-        let _ = tx.blocking_send(res);
+        // Use try_send to avoid blocking the file system event thread
+        // If the channel is full, we drop the event (the next event will still trigger reload)
+        let _ = tx.try_send(res);
     }) {
         Ok(w) => w,
         Err(e) => {
@@ -188,7 +200,7 @@ async fn watch_config_file(config_path: &str, shutdown_tx: watch::Sender<bool>) 
                 let is_config_file = event.paths.iter().any(|p| {
                     p.file_name()
                         .and_then(|n| n.to_str())
-                        .map(|n| n == path.file_name().and_then(|f| f.to_str()).unwrap_or(""))
+                        .map(|n| n == config_file_name)
                         .unwrap_or(false)
                 });
 
