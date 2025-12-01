@@ -5,12 +5,14 @@
 //! - API key pool management
 //! - Prometheus metrics
 //! - TUI monitoring
+//! - Master access token guard for gateway protection
 
 use axum::{
     body::Body,
     extract::State,
     http::{Request, StatusCode},
-    response::IntoResponse,
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::get,
     Json, Router,
 };
@@ -22,6 +24,7 @@ use open_gateway::{
     metrics::GatewayMetrics,
     proxy::ProxyService,
     tui::MonitorApp,
+    MasterAccessTokenConfig,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -73,8 +76,35 @@ struct AppState {
     proxy: Arc<ProxyService>,
     metrics: Arc<GatewayMetrics>,
     health: Arc<HealthChecker>,
+    master_access_token: MasterAccessTokenConfig,
     #[allow(dead_code)]
     config: GatewayConfig,
+}
+
+/// Master access token guard middleware
+async fn master_access_token_guard(
+    State(state): State<AppState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
+    // If guard is not enabled, pass through
+    if !state.master_access_token.enabled {
+        return next.run(req).await;
+    }
+
+    // Get the token from the configured header
+    let token = req
+        .headers()
+        .get(&state.master_access_token.header_name)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    // Validate the token
+    if state.master_access_token.validate_token(token) {
+        next.run(req).await
+    } else {
+        (StatusCode::UNAUTHORIZED, "Invalid or missing access token").into_response()
+    }
 }
 
 #[tokio::main]
@@ -121,6 +151,12 @@ async fn start_server(config_path: &str) -> anyhow::Result<()> {
     info!("Starting {} server(s)", servers.len());
     info!("Routes configured: {}", config.routes.len());
     info!("API key pools configured: {}", config.api_key_pools.len());
+    if config.master_access_token.enabled {
+        info!(
+            "Master access token guard enabled (header: {})",
+            config.master_access_token.header_name
+        );
+    }
 
     // Spawn a task for each server
     let mut handles = Vec::new();
@@ -141,14 +177,19 @@ async fn start_server(config_path: &str) -> anyhow::Result<()> {
             proxy,
             metrics: metrics.clone(),
             health: health.clone(),
+            master_access_token: config.master_access_token.clone(),
             config: config.clone(),
         };
 
-        // Build router
+        // Build router with master access token guard middleware
         let app = Router::new()
             .route(&config.health.path, get(health_handler))
             .route(&config.metrics.path, get(metrics_handler))
             .fallback(proxy_handler)
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                master_access_token_guard,
+            ))
             .layer(TraceLayer::new_for_http())
             .with_state(state);
 
@@ -257,6 +298,20 @@ fn validate_config(config_path: &str) -> anyhow::Result<()> {
             for (name, pool) in &config.api_key_pools {
                 println!("  {} ({:?}, {} keys)", name, pool.strategy, pool.keys.len());
             }
+            println!();
+
+            println!(
+                "Master Access Token Guard: {}",
+                if config.master_access_token.enabled {
+                    format!(
+                        "enabled (header: {}, {} token(s))",
+                        config.master_access_token.header_name,
+                        config.master_access_token.tokens.len()
+                    )
+                } else {
+                    "disabled".to_string()
+                }
+            );
             Ok(())
         }
         Err(e) => {
@@ -304,6 +359,17 @@ path = "/metrics"
 [health]
 enabled = true
 path = "/health"
+
+# Master Access Token Guard Configuration
+# When enabled, all requests must include a valid token in the specified header
+# to access the gateway. This protects the gateway from unauthorized access.
+[master_access_token]
+enabled = false  # Set to true to enable the guard
+header_name = "Authorization"  # Header name to check for the token
+tokens = [
+    # "Bearer your-secret-token-1",
+    # "Bearer your-secret-token-2",
+]
 
 # Route configurations
 # Routes can have a `name` field to be referenced by servers

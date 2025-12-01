@@ -179,6 +179,44 @@ impl Default for HealthConfig {
     }
 }
 
+/// Master access token guard configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MasterAccessTokenConfig {
+    /// Whether the master access token guard is enabled
+    #[serde(default)]
+    pub enabled: bool,
+    /// Header name to check for the access token
+    #[serde(default = "default_master_token_header_name")]
+    pub header_name: String,
+    /// List of valid tokens (any one of these tokens will be accepted)
+    #[serde(default)]
+    pub tokens: Vec<String>,
+}
+
+fn default_master_token_header_name() -> String {
+    "Authorization".to_string()
+}
+
+impl Default for MasterAccessTokenConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            header_name: default_master_token_header_name(),
+            tokens: vec![],
+        }
+    }
+}
+
+impl MasterAccessTokenConfig {
+    /// Validate an incoming token against the configured tokens
+    pub fn validate_token(&self, token: &str) -> bool {
+        if !self.enabled || self.tokens.is_empty() {
+            return true;
+        }
+        self.tokens.iter().any(|t| t == token)
+    }
+}
+
 /// Main gateway configuration
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GatewayConfig {
@@ -194,6 +232,9 @@ pub struct GatewayConfig {
     /// Health check configuration
     #[serde(default)]
     pub health: HealthConfig,
+    /// Master access token guard configuration
+    #[serde(default)]
+    pub master_access_token: MasterAccessTokenConfig,
     /// Route configurations
     #[serde(default)]
     pub routes: Vec<RouteConfig>,
@@ -258,6 +299,11 @@ impl GatewayConfig {
                     );
                 }
             }
+        }
+
+        // Validate master access token configuration
+        if self.master_access_token.enabled && self.master_access_token.tokens.is_empty() {
+            anyhow::bail!("Master access token guard is enabled but no tokens are configured");
         }
 
         Ok(())
@@ -498,5 +544,78 @@ target = "http://localhost:8081"
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0].host, "127.0.0.1");
         assert_eq!(servers[0].port, 3000);
+    }
+
+    #[test]
+    fn test_master_access_token_default() {
+        let config = GatewayConfig::default();
+        assert!(!config.master_access_token.enabled);
+        assert_eq!(config.master_access_token.header_name, "Authorization");
+        assert!(config.master_access_token.tokens.is_empty());
+    }
+
+    #[test]
+    fn test_master_access_token_parse() {
+        let toml = r#"
+[master_access_token]
+enabled = true
+header_name = "X-Gateway-Token"
+tokens = ["token1", "token2"]
+
+[[routes]]
+path = "/api/*"
+target = "http://localhost:8081"
+"#;
+
+        let config = GatewayConfig::parse(toml).unwrap();
+        assert!(config.master_access_token.enabled);
+        assert_eq!(config.master_access_token.header_name, "X-Gateway-Token");
+        assert_eq!(config.master_access_token.tokens.len(), 2);
+        assert_eq!(config.master_access_token.tokens[0], "token1");
+        assert_eq!(config.master_access_token.tokens[1], "token2");
+    }
+
+    #[test]
+    fn test_master_access_token_validation() {
+        let config = MasterAccessTokenConfig {
+            enabled: true,
+            header_name: "Authorization".to_string(),
+            tokens: vec!["valid-token".to_string(), "another-valid-token".to_string()],
+        };
+
+        assert!(config.validate_token("valid-token"));
+        assert!(config.validate_token("another-valid-token"));
+        assert!(!config.validate_token("invalid-token"));
+    }
+
+    #[test]
+    fn test_master_access_token_disabled_allows_all() {
+        let config = MasterAccessTokenConfig {
+            enabled: false,
+            header_name: "Authorization".to_string(),
+            tokens: vec!["valid-token".to_string()],
+        };
+
+        // When disabled, any token should be valid
+        assert!(config.validate_token("any-token"));
+        assert!(config.validate_token(""));
+    }
+
+    #[test]
+    fn test_master_access_token_enabled_no_tokens_error() {
+        let toml = r#"
+[master_access_token]
+enabled = true
+tokens = []
+
+[[routes]]
+path = "/api/*"
+target = "http://localhost:8081"
+"#;
+
+        let result = GatewayConfig::parse(toml);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Master access token guard is enabled but no tokens are configured"));
     }
 }

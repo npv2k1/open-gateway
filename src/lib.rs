@@ -6,6 +6,7 @@
 //! - Prometheus metrics
 //! - Health checks
 //! - TUI monitoring
+//! - Master access token guard for gateway protection
 
 pub mod api_key;
 pub mod config;
@@ -15,6 +16,7 @@ pub mod proxy;
 pub mod tui;
 
 pub use config::GatewayConfig;
+pub use config::MasterAccessTokenConfig;
 
 /// Application result type
 pub type Result<T> = anyhow::Result<T>;
