@@ -1,0 +1,46 @@
+services:
+  template-rust:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: template-rust:latest
+    container_name: template-rust-app
+    volumes:
+      # Mount data directory for persistent storage
+      - ./data:/app/data
+    environment:
+      # Override database path if needed
+      - DATABASE_URL=/app/data/todo.db
+    # Uncomment if you add a web server
+    # ports:
+    #   - "8080:8080"
+    stdin_open: true
+    tty: true
+    # Override entrypoint for interactive TUI mode
+    entrypoint: ["template-rust"]
+    command: ["tui"]
+    restart: unless-stopped
+
+  # Development service with live code mounting
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    image: template-rust:dev
+    container_name: template-rust-dev
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
+    working_dir: /app
+    environment:
+      - DATABASE_URL=/app/todo.db
+      - RUST_BACKTRACE=1
+    stdin_open: true
+    tty: true
+    command: ["cargo", "run", "--", "tui"]
+
+volumes:
+  cargo-cache:
+  target-cache:

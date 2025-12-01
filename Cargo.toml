@@ -1,0 +1,19 @@
+[package]
+name = "template-rust"
+version = "0.1.0"
+edition = "2021"
+authors = ["pnstack"]
+description = "A Rust template with todo app example using SQLite and TUI"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pnstack/template-rust"
+
+[dependencies]
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "chrono"] }
+ratatui = "0.24"
+crossterm = "0.27"
+clap = { version = "4.4", features = ["derive"] }
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.6", features = ["v4"] }
+anyhow = "1.0"

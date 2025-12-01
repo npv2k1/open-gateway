@@ -1,0 +1,31 @@
+# Rust build artifacts
+/target
+Cargo.lock.bak
+
+# Database files
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# Environment files
+.env
+.env.*
+!.envrc
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker data
+data/
+
+# Nix
+result
+result-*
+.direnv/

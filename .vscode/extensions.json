@@ -1,0 +1,7 @@
+{
+  "recommendations": [
+    "vadimcn.vscode-lldb",
+    "npv2k1.theme-dracula-gray",
+    "rust-lang.rust-analyzer"
+  ]
+}

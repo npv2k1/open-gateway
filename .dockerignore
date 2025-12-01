@@ -1,0 +1,35 @@
+# Build artifacts
+target/
+*.db
+*.db-*
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# CI/CD
+.github/
+
+# Documentation
+*.md
+docs/
+
+# Nix
+*.nix
+.envrc
+
+# Devcontainer
+.devcontainer/
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Misc
+.env
+.env.*

@@ -1,0 +1,27 @@
+name: Docker Build
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - "feature/**"
+      - "hotfix/**"
+    tags:
+      - "v*.*.*"
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: pnstack/actions/docker-publish@main
+        with:
+          platforms: linux/amd64,linux/arm64
+          dockerfile: Dockerfile
+          context: .
+          push_enabled: true
+          registry: ghcr.io
