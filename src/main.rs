@@ -148,6 +148,7 @@ async fn start_server(config_path: &str) -> anyhow::Result<()> {
         let app = Router::new()
             .route(&config.health.path, get(health_handler))
             .route(&config.metrics.path, get(metrics_handler))
+            .route("/whoami", get(whoami_handler))
             .fallback(proxy_handler)
             .layer(TraceLayer::new_for_http())
             .with_state(state);
@@ -374,6 +375,52 @@ async fn health_handler(State(state): State<AppState>) -> impl IntoResponse {
 async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
     let output = state.metrics.prometheus_output();
     (StatusCode::OK, output)
+}
+
+/// Whoami response structure
+#[derive(serde::Serialize)]
+struct WhoamiResponse {
+    uid: u32,
+    gid: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    username: Option<String>,
+    pid: u32,
+    cwd: Option<String>,
+}
+
+/// Whoami handler - returns information about the current process user
+async fn whoami_handler() -> impl IntoResponse {
+    // Get username from environment
+    let username = std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .ok();
+
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|p| p.to_string_lossy().to_string());
+
+    #[cfg(unix)]
+    let response = WhoamiResponse {
+        // SAFETY: getuid() and getgid() are safe to call as they only read
+        // the current process's user/group IDs from the kernel and don't
+        // modify memory or have any other side effects.
+        uid: unsafe { libc::getuid() },
+        gid: unsafe { libc::getgid() },
+        username,
+        pid: std::process::id(),
+        cwd,
+    };
+
+    #[cfg(not(unix))]
+    let response = WhoamiResponse {
+        uid: 0,
+        gid: 0,
+        username,
+        pid: std::process::id(),
+        cwd,
+    };
+
+    (StatusCode::OK, Json(response))
 }
 
 /// Proxy handler - forwards requests to target services

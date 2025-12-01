@@ -18,6 +18,9 @@ test: ## Run all tests
 test-verbose: ## Run tests with verbose output
 	cargo test -- --nocapture
 
+test-e2e: ## Run end-to-end tests
+	cargo test --test e2e_test
+
 clippy: ## Run clippy linter
 	cargo clippy -- -D warnings
 
