@@ -1,28 +1,20 @@
-//! Template Rust - Todo App Example
+//! Open Gateway - A simple and fast API gateway service
 //!
-//! This is a template Rust project featuring a todo application with SQLite database
-//! and terminal user interface (TUI).
+//! This is a gateway service that provides:
+//! - Request routing to microservices
+//! - API key pool management with multiple selection strategies
+//! - Prometheus metrics
+//! - Health checks
+//! - TUI monitoring
 
-pub mod database;
-pub mod models;
+pub mod api_key;
+pub mod config;
+pub mod health;
+pub mod metrics;
+pub mod proxy;
 pub mod tui;
 
-pub use models::*;
+pub use config::GatewayConfig;
 
 /// Application result type
 pub type Result<T> = anyhow::Result<T>;
-
-/// Application configuration
-#[derive(Debug, Clone)]
-pub struct Config {
-    /// Database file path
-    pub database_url: String,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            database_url: "todo.db".to_string(),
-        }
-    }
-}

@@ -1,6 +1,15 @@
-use crate::database::TodoDatabase;
-use crate::models::Todo;
-use crate::Result;
+//! TUI Monitor module
+//!
+//! This module provides a terminal user interface for monitoring:
+//! - Metrics display
+//! - Health check status
+//! - Configuration overview
+//! - Route information
+
+use crate::config::GatewayConfig;
+use crate::health::HealthChecker;
+use crate::metrics::GatewayMetrics;
+use crate::proxy::ProxyRoute;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
@@ -8,56 +17,87 @@ use crossterm::{
 };
 use ratatui::{
     backend::{Backend, CrosstermBackend},
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Tabs, Wrap},
     Frame, Terminal,
 };
 use std::io;
+use std::sync::Arc;
 use tokio::time::Duration;
 
-/// Application state
-pub struct App {
-    db: TodoDatabase,
-    todos: Vec<Todo>,
-    selected: ListState,
-    input: String,
-    input_mode: InputMode,
-    status_message: String,
-    filter: Filter,
+/// Tab selection
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Tab {
+    Overview,
+    Routes,
+    Config,
+    Help,
 }
 
-#[derive(Debug, Clone)]
-pub enum InputMode {
-    Normal,
-    Editing,
-}
+impl Tab {
+    fn titles() -> Vec<&'static str> {
+        vec!["Overview", "Routes", "Config", "Help"]
+    }
 
-#[derive(Debug, Clone)]
-pub enum Filter {
-    All,
-    Completed,
-    Pending,
-}
-
-impl App {
-    pub fn new(db: TodoDatabase) -> Self {
-        let mut selected = ListState::default();
-        selected.select(Some(0));
-
-        Self {
-            db,
-            todos: Vec::new(),
-            selected,
-            input: String::new(),
-            input_mode: InputMode::Normal,
-            status_message: "Welcome to Todo App! Press 'h' for help.".to_string(),
-            filter: Filter::All,
+    fn from_index(index: usize) -> Self {
+        match index {
+            0 => Tab::Overview,
+            1 => Tab::Routes,
+            2 => Tab::Config,
+            3 => Tab::Help,
+            _ => Tab::Overview,
         }
     }
 
-    pub async fn run(&mut self) -> Result<()> {
-        // Setup terminal
+    fn index(&self) -> usize {
+        match self {
+            Tab::Overview => 0,
+            Tab::Routes => 1,
+            Tab::Config => 2,
+            Tab::Help => 3,
+        }
+    }
+}
+
+/// TUI Monitor application
+pub struct MonitorApp {
+    config: GatewayConfig,
+    metrics: Arc<GatewayMetrics>,
+    health: Arc<HealthChecker>,
+    routes: Vec<ProxyRoute>,
+    current_tab: Tab,
+    route_list_state: ListState,
+    should_quit: bool,
+}
+
+impl MonitorApp {
+    /// Create a new monitor application
+    pub fn new(
+        config: GatewayConfig,
+        metrics: Arc<GatewayMetrics>,
+        health: Arc<HealthChecker>,
+        routes: Vec<ProxyRoute>,
+    ) -> Self {
+        let mut route_list_state = ListState::default();
+        if !routes.is_empty() {
+            route_list_state.select(Some(0));
+        }
+
+        Self {
+            config,
+            metrics,
+            health,
+            routes,
+            current_tab: Tab::Overview,
+            route_list_state,
+            should_quit: false,
+        }
+    }
+
+    /// Run the TUI application
+    pub async fn run(&mut self) -> anyhow::Result<()> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -66,7 +106,6 @@ impl App {
 
         let result = self.run_app(&mut terminal).await;
 
-        // Restore terminal
         disable_raw_mode()?;
         execute!(
             terminal.backend_mut(),
@@ -78,168 +117,79 @@ impl App {
         result
     }
 
-    async fn run_app<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
-        self.refresh_todos().await?;
-
+    async fn run_app<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> anyhow::Result<()> {
         loop {
             terminal.draw(|f| self.ui(f))?;
 
-            if event::poll(Duration::from_millis(100))? {
+            if event::poll(Duration::from_millis(250))? {
                 if let Event::Key(key) = event::read()? {
                     if key.kind == KeyEventKind::Press {
-                        match self.input_mode {
-                            InputMode::Normal => {
-                                if self.handle_normal_input(key.code).await? {
-                                    break;
-                                }
-                            }
-                            InputMode::Editing => {
-                                if self.handle_editing_input(key.code).await? {
-                                    break;
-                                }
-                            }
-                        }
+                        self.handle_input(key.code);
                     }
                 }
+            }
+
+            if self.should_quit {
+                break;
             }
         }
 
         Ok(())
     }
 
-    async fn handle_normal_input(&mut self, key: KeyCode) -> Result<bool> {
+    fn handle_input(&mut self, key: KeyCode) {
         match key {
-            KeyCode::Char('q') => return Ok(true),
-            KeyCode::Char('h') => {
-                self.status_message = "Commands: q=quit, n=new todo, d=delete, c=toggle complete, a=all, p=pending, f=finished, ↑↓=navigate".to_string();
+            KeyCode::Char('q') | KeyCode::Esc => {
+                self.should_quit = true;
             }
-            KeyCode::Char('n') => {
-                self.input_mode = InputMode::Editing;
-                self.input.clear();
-                self.status_message = "Enter new todo (ESC to cancel, Enter to save):".to_string();
+            KeyCode::Tab | KeyCode::Right => {
+                let next_index = (self.current_tab.index() + 1) % 4;
+                self.current_tab = Tab::from_index(next_index);
             }
-            KeyCode::Char('d') => {
-                if let Some(index) = self.selected.selected() {
-                    if index < self.todos.len() {
-                        let todo = &self.todos[index];
-                        self.db.delete_todo(&todo.id).await?;
-                        self.refresh_todos().await?;
-                        self.status_message = "Todo deleted!".to_string();
-                    }
+            KeyCode::BackTab | KeyCode::Left => {
+                let prev_index = if self.current_tab.index() == 0 {
+                    3
+                } else {
+                    self.current_tab.index() - 1
+                };
+                self.current_tab = Tab::from_index(prev_index);
+            }
+            KeyCode::Char('1') => self.current_tab = Tab::Overview,
+            KeyCode::Char('2') => self.current_tab = Tab::Routes,
+            KeyCode::Char('3') => self.current_tab = Tab::Config,
+            KeyCode::Char('4') | KeyCode::Char('h') => self.current_tab = Tab::Help,
+            KeyCode::Down | KeyCode::Char('j') => {
+                if self.current_tab == Tab::Routes && !self.routes.is_empty() {
+                    let i = match self.route_list_state.selected() {
+                        Some(i) => {
+                            if i >= self.routes.len() - 1 {
+                                0
+                            } else {
+                                i + 1
+                            }
+                        }
+                        None => 0,
+                    };
+                    self.route_list_state.select(Some(i));
                 }
             }
-            KeyCode::Char('c') => {
-                if let Some(index) = self.selected.selected() {
-                    if index < self.todos.len() {
-                        let mut todo = self.todos[index].clone();
-                        if todo.completed {
-                            todo.uncomplete();
-                        } else {
-                            todo.complete();
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.current_tab == Tab::Routes && !self.routes.is_empty() {
+                    let i = match self.route_list_state.selected() {
+                        Some(i) => {
+                            if i == 0 {
+                                self.routes.len() - 1
+                            } else {
+                                i - 1
+                            }
                         }
-                        self.db.update_todo(&todo).await?;
-                        self.refresh_todos().await?;
-                        self.status_message = if todo.completed {
-                            "Todo marked as completed!".to_string()
-                        } else {
-                            "Todo marked as pending!".to_string()
-                        };
-                    }
+                        None => 0,
+                    };
+                    self.route_list_state.select(Some(i));
                 }
-            }
-            KeyCode::Char('a') => {
-                self.filter = Filter::All;
-                self.refresh_todos().await?;
-                self.status_message = "Showing all todos".to_string();
-            }
-            KeyCode::Char('p') => {
-                self.filter = Filter::Pending;
-                self.refresh_todos().await?;
-                self.status_message = "Showing pending todos".to_string();
-            }
-            KeyCode::Char('f') => {
-                self.filter = Filter::Completed;
-                self.refresh_todos().await?;
-                self.status_message = "Showing completed todos".to_string();
-            }
-            KeyCode::Down => {
-                let i = match self.selected.selected() {
-                    Some(i) => {
-                        if i >= self.todos.len().saturating_sub(1) {
-                            0
-                        } else {
-                            i + 1
-                        }
-                    }
-                    None => 0,
-                };
-                self.selected.select(Some(i));
-            }
-            KeyCode::Up => {
-                let i = match self.selected.selected() {
-                    Some(i) => {
-                        if i == 0 {
-                            self.todos.len().saturating_sub(1)
-                        } else {
-                            i - 1
-                        }
-                    }
-                    None => 0,
-                };
-                self.selected.select(Some(i));
             }
             _ => {}
         }
-        Ok(false)
-    }
-
-    async fn handle_editing_input(&mut self, key: KeyCode) -> Result<bool> {
-        match key {
-            KeyCode::Enter => {
-                if !self.input.is_empty() {
-                    let todo = Todo::new(self.input.trim().to_string(), None);
-                    self.db.create_todo(&todo).await?;
-                    self.input.clear();
-                    self.input_mode = InputMode::Normal;
-                    self.refresh_todos().await?;
-                    self.status_message = "Todo added!".to_string();
-                }
-            }
-            KeyCode::Char(c) => {
-                self.input.push(c);
-            }
-            KeyCode::Backspace => {
-                self.input.pop();
-            }
-            KeyCode::Esc => {
-                self.input.clear();
-                self.input_mode = InputMode::Normal;
-                self.status_message = "Cancelled".to_string();
-            }
-            _ => {}
-        }
-        Ok(false)
-    }
-
-    async fn refresh_todos(&mut self) -> Result<()> {
-        self.todos = match self.filter {
-            Filter::All => self.db.get_all_todos().await?,
-            Filter::Completed => self.db.get_todos_by_status(true).await?,
-            Filter::Pending => self.db.get_todos_by_status(false).await?,
-        };
-
-        // Adjust selection if needed
-        if self.todos.is_empty() {
-            self.selected.select(None);
-        } else if let Some(selected) = self.selected.selected() {
-            if selected >= self.todos.len() {
-                self.selected.select(Some(self.todos.len() - 1));
-            }
-        } else {
-            self.selected.select(Some(0));
-        }
-
-        Ok(())
     }
 
     fn ui(&mut self, f: &mut Frame) {
@@ -247,69 +197,416 @@ impl App {
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
-                Constraint::Length(3),
-                Constraint::Min(0),
-                Constraint::Length(3),
+                Constraint::Length(3), // Title
+                Constraint::Length(3), // Tabs
+                Constraint::Min(0),    // Content
+                Constraint::Length(3), // Status bar
             ])
             .split(f.size());
 
-        // Title
-        let title = Paragraph::new("📝 Todo App")
-            .style(Style::default().fg(Color::Cyan))
+        self.render_title(f, chunks[0]);
+        self.render_tabs(f, chunks[1]);
+
+        match self.current_tab {
+            Tab::Overview => self.render_overview(f, chunks[2]),
+            Tab::Routes => self.render_routes(f, chunks[2]),
+            Tab::Config => self.render_config(f, chunks[2]),
+            Tab::Help => self.render_help(f, chunks[2]),
+        }
+
+        self.render_status_bar(f, chunks[3]);
+    }
+
+    fn render_title(&self, f: &mut Frame, area: Rect) {
+        let title = Paragraph::new("🚀 Open Gateway Monitor")
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL));
-        f.render_widget(title, chunks[0]);
+        f.render_widget(title, area);
+    }
 
-        // Todo list
-        let todos: Vec<ListItem> = self
-            .todos
+    fn render_tabs(&self, f: &mut Frame, area: Rect) {
+        let titles: Vec<Line> = Tab::titles()
             .iter()
-            .map(|todo| {
-                let status = if todo.completed { "✓" } else { "○" };
-                let style = if todo.completed {
+            .enumerate()
+            .map(|(i, t)| {
+                let style = if i == self.current_tab.index() {
                     Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::CROSSED_OUT)
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::White)
                 };
-
-                let content = format!("{} {}", status, todo.title);
-                ListItem::new(content).style(style)
+                Line::from(Span::styled(format!(" {} ", t), style))
             })
             .collect();
 
-        let filter_text = match self.filter {
-            Filter::All => "All",
-            Filter::Completed => "Completed",
-            Filter::Pending => "Pending",
+        let tabs = Tabs::new(titles)
+            .block(Block::default().borders(Borders::ALL).title("Tabs"))
+            .select(self.current_tab.index())
+            .highlight_style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            );
+        f.render_widget(tabs, area);
+    }
+
+    fn render_overview(&self, f: &mut Frame, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+
+        // Left side: Metrics
+        let metrics = self.metrics.snapshot();
+        let health_response = self.health.liveness();
+
+        let metrics_text = vec![
+            Line::from(vec![
+                Span::styled("Total Requests: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!("{}", metrics.total_requests),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Total Errors: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!("{}", metrics.total_errors),
+                    Style::default()
+                        .fg(Color::Red)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Error Rate: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!("{:.2}%", metrics.error_rate),
+                    Style::default()
+                        .fg(if metrics.error_rate > 5.0 {
+                            Color::Red
+                        } else {
+                            Color::Green
+                        })
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Routes: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!("{}", self.routes.len()),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("API Key Pools: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!("{}", self.config.api_key_pools.len()),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+        ];
+
+        let metrics_widget = Paragraph::new(metrics_text)
+            .block(Block::default().borders(Borders::ALL).title("📊 Metrics"))
+            .wrap(Wrap { trim: true });
+        f.render_widget(metrics_widget, chunks[0]);
+
+        // Right side: Health
+        let health_status_color = match health_response.status {
+            crate::health::HealthStatus::Healthy => Color::Green,
+            crate::health::HealthStatus::Unhealthy => Color::Red,
+            crate::health::HealthStatus::Degraded => Color::Yellow,
         };
 
-        let todos_list = List::new(todos)
+        let health_text = vec![
+            Line::from(vec![
+                Span::styled("Status: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    format!("{}", health_response.status),
+                    Style::default()
+                        .fg(health_status_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Version: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    health_response.version.clone(),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Uptime: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    self.health.uptime_formatted(),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("Server: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    self.config.server_addr(),
+                    Style::default().fg(Color::White),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Metrics: ", Style::default().fg(Color::Gray)),
+                Span::styled(
+                    if self.config.metrics.enabled {
+                        self.config.metrics.path.clone()
+                    } else {
+                        "disabled".to_string()
+                    },
+                    Style::default().fg(Color::White),
+                ),
+            ]),
+        ];
+
+        let health_widget = Paragraph::new(health_text)
+            .block(Block::default().borders(Borders::ALL).title("💚 Health"))
+            .wrap(Wrap { trim: true });
+        f.render_widget(health_widget, chunks[1]);
+    }
+
+    fn render_routes(&mut self, f: &mut Frame, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .split(area);
+
+        // Left: Route list
+        let items: Vec<ListItem> = self
+            .routes
+            .iter()
+            .map(|route| {
+                let content = format!("{} → {}", route.path_pattern, route.target);
+                ListItem::new(content).style(Style::default().fg(Color::White))
+            })
+            .collect();
+
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title("Routes"))
+            .highlight_style(
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(">> ");
+
+        f.render_stateful_widget(list, chunks[0], &mut self.route_list_state);
+
+        // Right: Route details
+        let detail_text = if let Some(selected) = self.route_list_state.selected() {
+            if selected < self.routes.len() {
+                let route = &self.routes[selected];
+                let methods = if route.methods.is_empty() {
+                    "ALL".to_string()
+                } else {
+                    route.methods.join(", ")
+                };
+                let api_key = route
+                    .api_key_selector
+                    .as_ref()
+                    .map(|s| format!("{} ({})", s.header_name, s.strategy_name()))
+                    .unwrap_or_else(|| "None".to_string());
+
+                vec![
+                    Line::from(vec![
+                        Span::styled("Path: ", Style::default().fg(Color::Gray)),
+                        Span::styled(
+                            route.path_pattern.clone(),
+                            Style::default().fg(Color::Cyan),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("Target: ", Style::default().fg(Color::Gray)),
+                        Span::styled(route.target.clone(), Style::default().fg(Color::Green)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("Methods: ", Style::default().fg(Color::Gray)),
+                        Span::styled(methods, Style::default().fg(Color::Yellow)),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("Strip Prefix: ", Style::default().fg(Color::Gray)),
+                        Span::styled(
+                            if route.strip_prefix { "Yes" } else { "No" },
+                            Style::default().fg(Color::White),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("API Key: ", Style::default().fg(Color::Gray)),
+                        Span::styled(api_key, Style::default().fg(Color::Magenta)),
+                    ]),
+                    Line::from(""),
+                    Line::from(vec![Span::styled(
+                        route
+                            .description
+                            .clone()
+                            .unwrap_or_else(|| "No description".to_string()),
+                        Style::default().fg(Color::DarkGray),
+                    )]),
+                ]
+            } else {
+                vec![Line::from("Select a route")]
+            }
+        } else {
+            vec![Line::from("No routes configured")]
+        };
+
+        let detail = Paragraph::new(detail_text)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(format!("Todos ({})", filter_text)),
+                    .title("Route Details"),
             )
-            .highlight_style(Style::default().bg(Color::DarkGray))
-            .highlight_symbol(">> ");
+            .wrap(Wrap { trim: true });
+        f.render_widget(detail, chunks[1]);
+    }
 
-        f.render_stateful_widget(todos_list, chunks[1], &mut self.selected);
+    fn render_config(&self, f: &mut Frame, area: Rect) {
+        let config_text = vec![
+            Line::from(Span::styled(
+                "Server Configuration",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(format!("  Host: {}", self.config.server.host)),
+            Line::from(format!("  Port: {}", self.config.server.port)),
+            Line::from(format!("  Timeout: {}s", self.config.server.timeout)),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Metrics Configuration",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(format!(
+                "  Enabled: {}",
+                if self.config.metrics.enabled {
+                    "Yes"
+                } else {
+                    "No"
+                }
+            )),
+            Line::from(format!("  Path: {}", self.config.metrics.path)),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Health Configuration",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(format!(
+                "  Enabled: {}",
+                if self.config.health.enabled {
+                    "Yes"
+                } else {
+                    "No"
+                }
+            )),
+            Line::from(format!("  Path: {}", self.config.health.path)),
+            Line::from(""),
+            Line::from(Span::styled(
+                "API Key Pools",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+        ];
 
-        // Status/Input bar
-        let status_text = match self.input_mode {
-            InputMode::Normal => self.status_message.clone(),
-            InputMode::Editing => format!("New todo: {}", self.input),
-        };
+        let mut lines = config_text;
 
-        let status = Paragraph::new(status_text)
-            .style(match self.input_mode {
-                InputMode::Normal => Style::default(),
-                InputMode::Editing => Style::default().fg(Color::Yellow),
-            })
-            .wrap(Wrap { trim: true })
-            .block(Block::default().borders(Borders::ALL).title("Status"));
+        for (name, pool) in &self.config.api_key_pools {
+            lines.push(Line::from(format!("  {}:", name)));
+            lines.push(Line::from(format!("    Strategy: {:?}", pool.strategy)));
+            lines.push(Line::from(format!("    Header: {}", pool.header_name)));
+            lines.push(Line::from(format!(
+                "    Keys: {} ({} enabled)",
+                pool.keys.len(),
+                pool.keys.iter().filter(|k| k.enabled).count()
+            )));
+        }
 
-        f.render_widget(status, chunks[2]);
+        let config = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("⚙️ Configuration"),
+            )
+            .wrap(Wrap { trim: true });
+        f.render_widget(config, area);
+    }
+
+    fn render_help(&self, f: &mut Frame, area: Rect) {
+        let help_text = vec![
+            Line::from(Span::styled(
+                "Keyboard Shortcuts",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from("  Tab / →         Next tab"),
+            Line::from("  Shift+Tab / ←   Previous tab"),
+            Line::from("  1-4             Jump to tab"),
+            Line::from("  h               Help tab"),
+            Line::from("  q / Esc         Quit"),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Routes Tab",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from("  ↑ / k           Previous route"),
+            Line::from("  ↓ / j           Next route"),
+            Line::from(""),
+            Line::from(Span::styled(
+                "About",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(format!(
+                "  Open Gateway v{}",
+                env!("CARGO_PKG_VERSION")
+            )),
+            Line::from("  A simple and fast API gateway service"),
+            Line::from(""),
+            Line::from("  https://github.com/npv2k1/open-gateway"),
+        ];
+
+        let help = Paragraph::new(help_text)
+            .block(Block::default().borders(Borders::ALL).title("❓ Help"))
+            .wrap(Wrap { trim: true });
+        f.render_widget(help, area);
+    }
+
+    fn render_status_bar(&self, f: &mut Frame, area: Rect) {
+        let status = Paragraph::new(Line::from(vec![
+            Span::styled("Tab/←→", Style::default().fg(Color::Yellow)),
+            Span::raw(": Switch tabs  "),
+            Span::styled("q", Style::default().fg(Color::Yellow)),
+            Span::raw(": Quit  "),
+            Span::styled("h", Style::default().fg(Color::Yellow)),
+            Span::raw(": Help"),
+        ]))
+        .style(Style::default().fg(Color::Gray))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+        f.render_widget(status, area);
     }
 }
