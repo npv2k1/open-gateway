@@ -14,6 +14,7 @@ A simple and fast API gateway service with API key management and TUI monitoring
 - ❤️ **Health Checks**: Liveness and readiness endpoints
 - 🖥️ **TUI Monitor**: Terminal-based dashboard for monitoring
 - 🛣️ **Flexible Routing**: Path-based routing with prefix stripping
+- 🌐 **Multiple Servers**: Run multiple gateway servers on different ports, each with its own routes
 
 ## Installation
 
@@ -81,11 +82,25 @@ Download the latest binary from the [Releases](https://github.com/npv2k1/open-ga
 Open Gateway uses TOML configuration files. Here's an example:
 
 ```toml
-# Server configuration
+# Option 1: Single server (backward compatible)
 [server]
 host = "0.0.0.0"
 port = 8080
 timeout = 30
+
+# Option 2: Multiple servers (each with optional route references)
+[[servers]]
+name = "api-server"
+host = "0.0.0.0"
+port = 8080
+timeout = 30
+routes = ["api-v1"]  # Reference routes by name
+
+[[servers]]
+name = "admin-server"
+host = "0.0.0.0"
+port = 9090
+# No routes = uses all routes
 
 # Metrics configuration
 [metrics]
@@ -99,6 +114,7 @@ path = "/health"
 
 # Route configurations
 [[routes]]
+name = "api-v1"  # Optional name for server references
 path = "/api/v1/*"
 target = "http://localhost:3001"
 strip_prefix = true
@@ -119,7 +135,7 @@ keys = [
 
 ### Configuration Options
 
-#### Server
+#### Server (Single)
 
 | Option | Description | Default |
 |--------|-------------|---------|
@@ -127,10 +143,25 @@ keys = [
 | `port` | Port to bind to | `8080` |
 | `timeout` | Request timeout in seconds | `30` |
 
+#### Servers (Multiple)
+
+Use `[[servers]]` to configure multiple servers. Each server can have its own set of routes.
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `name` | Server name (for display) | `host:port` |
+| `host` | Host to bind to | `0.0.0.0` |
+| `port` | Port to bind to | `8080` |
+| `timeout` | Request timeout in seconds | `30` |
+| `routes` | List of route names/paths to use | All routes |
+
+**Note:** If `routes` is not specified or empty, the server will use all enabled routes.
+
 #### Routes
 
 | Option | Description | Required |
 |--------|-------------|----------|
+| `name` | Route name (for server references) | No |
 | `path` | Path pattern (supports `*` wildcard) | Yes |
 | `target` | Target URL to forward requests | Yes |
 | `strip_prefix` | Strip matched prefix from path | No (default: false) |

@@ -280,9 +280,7 @@ impl MonitorApp {
                 Span::styled("Total Errors: ", Style::default().fg(Color::Gray)),
                 Span::styled(
                     format!("{}", metrics.total_errors),
-                    Style::default()
-                        .fg(Color::Red)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
@@ -327,7 +325,7 @@ impl MonitorApp {
             crate::health::HealthStatus::Degraded => Color::Yellow,
         };
 
-        let health_text = vec![
+        let mut health_text = vec![
             Line::from(vec![
                 Span::styled("Status: ", Style::default().fg(Color::Gray)),
                 Span::styled(
@@ -352,25 +350,40 @@ impl MonitorApp {
                 ),
             ]),
             Line::from(""),
-            Line::from(vec![
-                Span::styled("Server: ", Style::default().fg(Color::Gray)),
-                Span::styled(
-                    self.config.server_addr(),
-                    Style::default().fg(Color::White),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("Metrics: ", Style::default().fg(Color::Gray)),
-                Span::styled(
-                    if self.config.metrics.enabled {
-                        self.config.metrics.path.clone()
-                    } else {
-                        "disabled".to_string()
-                    },
-                    Style::default().fg(Color::White),
-                ),
-            ]),
         ];
+
+        // Display all servers
+        let servers = self.config.get_servers();
+        health_text.push(Line::from(vec![
+            Span::styled("Servers: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                format!("{}", servers.len()),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]));
+        for server in servers {
+            let name = server
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("{}:{}", server.host, server.port));
+            health_text.push(Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled(name, Style::default().fg(Color::White)),
+            ]));
+        }
+
+        health_text.push(Line::from(""));
+        health_text.push(Line::from(vec![
+            Span::styled("Metrics: ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                if self.config.metrics.enabled {
+                    self.config.metrics.path.clone()
+                } else {
+                    "disabled".to_string()
+                },
+                Style::default().fg(Color::White),
+            ),
+        ]));
 
         let health_widget = Paragraph::new(health_text)
             .block(Block::default().borders(Borders::ALL).title("💚 Health"))
@@ -423,10 +436,7 @@ impl MonitorApp {
                 vec![
                     Line::from(vec![
                         Span::styled("Path: ", Style::default().fg(Color::Gray)),
-                        Span::styled(
-                            route.path_pattern.clone(),
-                            Style::default().fg(Color::Cyan),
-                        ),
+                        Span::styled(route.path_pattern.clone(), Style::default().fg(Color::Cyan)),
                     ]),
                     Line::from(vec![
                         Span::styled("Target: ", Style::default().fg(Color::Gray)),
@@ -474,71 +484,82 @@ impl MonitorApp {
     }
 
     fn render_config(&self, f: &mut Frame, area: Rect) {
-        let config_text = vec![
-            Line::from(Span::styled(
-                "Server Configuration",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(format!("  Host: {}", self.config.server.host)),
-            Line::from(format!("  Port: {}", self.config.server.port)),
-            Line::from(format!("  Timeout: {}s", self.config.server.timeout)),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Metrics Configuration",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(format!(
-                "  Enabled: {}",
-                if self.config.metrics.enabled {
-                    "Yes"
-                } else {
-                    "No"
-                }
-            )),
-            Line::from(format!("  Path: {}", self.config.metrics.path)),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Health Configuration",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(format!(
-                "  Enabled: {}",
-                if self.config.health.enabled {
-                    "Yes"
-                } else {
-                    "No"
-                }
-            )),
-            Line::from(format!("  Path: {}", self.config.health.path)),
-            Line::from(""),
-            Line::from(Span::styled(
-                "API Key Pools",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
-        ];
+        let mut config_text = vec![Line::from(Span::styled(
+            "Servers Configuration",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ))];
 
-        let mut lines = config_text;
+        // Display all servers
+        let servers = self.config.get_servers();
+        for server in servers {
+            let name = server
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("{}:{}", server.host, server.port));
+            let route_count = self.config.routes_for_server(server).len();
+            config_text.push(Line::from(format!("  {}:", name)));
+            config_text.push(Line::from(format!(
+                "    Address: {}:{}",
+                server.host, server.port
+            )));
+            config_text.push(Line::from(format!("    Timeout: {}s", server.timeout)));
+            config_text.push(Line::from(format!("    Routes: {}", route_count)));
+        }
+
+        config_text.push(Line::from(""));
+        config_text.push(Line::from(Span::styled(
+            "Metrics Configuration",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        config_text.push(Line::from(format!(
+            "  Enabled: {}",
+            if self.config.metrics.enabled {
+                "Yes"
+            } else {
+                "No"
+            }
+        )));
+        config_text.push(Line::from(format!("  Path: {}", self.config.metrics.path)));
+        config_text.push(Line::from(""));
+        config_text.push(Line::from(Span::styled(
+            "Health Configuration",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        config_text.push(Line::from(format!(
+            "  Enabled: {}",
+            if self.config.health.enabled {
+                "Yes"
+            } else {
+                "No"
+            }
+        )));
+        config_text.push(Line::from(format!("  Path: {}", self.config.health.path)));
+        config_text.push(Line::from(""));
+        config_text.push(Line::from(Span::styled(
+            "API Key Pools",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
 
         for (name, pool) in &self.config.api_key_pools {
-            lines.push(Line::from(format!("  {}:", name)));
-            lines.push(Line::from(format!("    Strategy: {:?}", pool.strategy)));
-            lines.push(Line::from(format!("    Header: {}", pool.header_name)));
-            lines.push(Line::from(format!(
+            config_text.push(Line::from(format!("  {}:", name)));
+            config_text.push(Line::from(format!("    Strategy: {:?}", pool.strategy)));
+            config_text.push(Line::from(format!("    Header: {}", pool.header_name)));
+            config_text.push(Line::from(format!(
                 "    Keys: {} ({} enabled)",
                 pool.keys.len(),
                 pool.keys.iter().filter(|k| k.enabled).count()
             )));
         }
 
-        let config = Paragraph::new(lines)
+        let config = Paragraph::new(config_text)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
@@ -580,10 +601,7 @@ impl MonitorApp {
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
-            Line::from(format!(
-                "  Open Gateway v{}",
-                env!("CARGO_PKG_VERSION")
-            )),
+            Line::from(format!("  Open Gateway v{}", env!("CARGO_PKG_VERSION"))),
             Line::from("  A simple and fast API gateway service"),
             Line::from(""),
             Line::from("  https://github.com/npv2k1/open-gateway"),
