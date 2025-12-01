@@ -82,6 +82,13 @@ struct AppState {
 }
 
 /// Master access token guard middleware
+///
+/// When enabled, this middleware validates that incoming requests include a valid
+/// access token in the configured header. This applies to ALL endpoints including
+/// health checks and metrics endpoints for maximum security.
+///
+/// If you need to exclude health/metrics from authentication, consider running
+/// a separate server instance without the guard for internal monitoring.
 async fn master_access_token_guard(
     State(state): State<AppState>,
     req: Request<Body>,
@@ -363,6 +370,8 @@ path = "/health"
 # Master Access Token Guard Configuration
 # When enabled, all requests must include a valid token in the specified header
 # to access the gateway. This protects the gateway from unauthorized access.
+# NOTE: This applies to ALL endpoints including /health and /metrics.
+# For internal monitoring without authentication, use a separate server instance.
 [master_access_token]
 enabled = false  # Set to true to enable the guard
 header_name = "Authorization"  # Header name to check for the token

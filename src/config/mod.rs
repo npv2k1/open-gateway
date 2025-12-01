@@ -209,10 +209,18 @@ impl Default for MasterAccessTokenConfig {
 
 impl MasterAccessTokenConfig {
     /// Validate an incoming token against the configured tokens
+    /// Returns true if access should be allowed, false otherwise
     pub fn validate_token(&self, token: &str) -> bool {
-        if !self.enabled || self.tokens.is_empty() {
+        // If guard is not enabled, allow all access
+        if !self.enabled {
             return true;
         }
+        // Defense in depth: if enabled but no tokens configured, deny access
+        // (This case should be caught by config validation, but handle it safely)
+        if self.tokens.is_empty() {
+            return false;
+        }
+        // Check if the provided token matches any configured token
         self.tokens.iter().any(|t| t == token)
     }
 }
@@ -617,5 +625,21 @@ target = "http://localhost:8081"
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("Master access token guard is enabled but no tokens are configured"));
+    }
+
+    #[test]
+    fn test_master_access_token_defense_in_depth() {
+        // Test that validate_token returns false when enabled but tokens are empty
+        // This is a defense-in-depth check that should never happen in practice
+        // because config validation catches this case
+        let config = MasterAccessTokenConfig {
+            enabled: true,
+            header_name: "Authorization".to_string(),
+            tokens: vec![], // Empty tokens - should deny access
+        };
+
+        // Should deny access even with any token
+        assert!(!config.validate_token("any-token"));
+        assert!(!config.validate_token(""));
     }
 }
