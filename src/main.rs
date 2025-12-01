@@ -401,6 +401,9 @@ async fn whoami_handler() -> impl IntoResponse {
 
     #[cfg(unix)]
     let response = WhoamiResponse {
+        // SAFETY: getuid() and getgid() are safe to call as they only read
+        // the current process's user/group IDs from the kernel and don't
+        // modify memory or have any other side effects.
         uid: unsafe { libc::getuid() },
         gid: unsafe { libc::getgid() },
         username,
