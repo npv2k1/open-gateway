@@ -206,9 +206,16 @@ impl ProxyService {
         // Copy headers
         if let Some(headers) = builder.headers_mut() {
             for (key, value) in parts.headers.iter() {
-                // Skip hop-by-hop headers
+                // Skip hop-by-hop headers (including Host, which we'll set from target URL)
                 if !is_hop_by_hop_header(key.as_str()) {
                     headers.insert(key.clone(), value.clone());
+                }
+            }
+
+            // Set Host header from target URL to ensure HTTPS targets work correctly
+            if let Some(target_host) = extract_host_from_url(&target_url) {
+                if let Ok(header_value) = target_host.parse::<axum::http::header::HeaderValue>() {
+                    headers.insert(axum::http::header::HOST, header_value);
                 }
             }
 
@@ -312,7 +319,19 @@ fn is_hop_by_hop_header(name: &str) -> bool {
             | "trailers"
             | "transfer-encoding"
             | "upgrade"
+            | "host"
     )
+}
+
+/// Extract host and optional port from a URL string
+fn extract_host_from_url(url: &str) -> Option<String> {
+    // Parse the URL to extract host
+    if let Ok(parsed) = url.parse::<axum::http::Uri>() {
+        if let Some(authority) = parsed.authority() {
+            return Some(authority.to_string());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -383,5 +402,43 @@ mod tests {
             route.get_target_url("/api/users", None),
             "http://localhost:8081/api/users"
         );
+    }
+
+    #[test]
+    fn test_extract_host_from_url() {
+        // HTTP URL without port
+        assert_eq!(
+            extract_host_from_url("http://example.com/path"),
+            Some("example.com".to_string())
+        );
+
+        // HTTP URL with port
+        assert_eq!(
+            extract_host_from_url("http://localhost:8080/path"),
+            Some("localhost:8080".to_string())
+        );
+
+        // HTTPS URL without port
+        assert_eq!(
+            extract_host_from_url("https://api.example.com/v1/users"),
+            Some("api.example.com".to_string())
+        );
+
+        // HTTPS URL with port
+        assert_eq!(
+            extract_host_from_url("https://api.example.com:443/v1/users"),
+            Some("api.example.com:443".to_string())
+        );
+
+        // Relative path (no authority)
+        assert_eq!(extract_host_from_url("/just/a/path"), None);
+    }
+
+    #[test]
+    fn test_host_header_is_hop_by_hop() {
+        // Host header should be considered hop-by-hop so it's not forwarded from client
+        assert!(is_hop_by_hop_header("host"));
+        assert!(is_hop_by_hop_header("Host"));
+        assert!(is_hop_by_hop_header("HOST"));
     }
 }
