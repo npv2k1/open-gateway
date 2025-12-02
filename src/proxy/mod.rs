@@ -19,6 +19,7 @@ use hyper_util::rt::TokioExecutor;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
+use tracing::warn;
 
 /// Proxy service for forwarding requests
 #[derive(Clone)]
@@ -213,9 +214,25 @@ impl ProxyService {
             }
 
             // Set Host header from target URL to ensure HTTPS targets work correctly
-            if let Some(target_host) = extract_host_from_url(&target_url) {
-                if let Ok(header_value) = target_host.parse::<axum::http::header::HeaderValue>() {
-                    headers.insert(axum::http::header::HOST, header_value);
+            match extract_host_from_url(&target_url) {
+                Some(target_host) => {
+                    match target_host.parse::<axum::http::header::HeaderValue>() {
+                        Ok(header_value) => {
+                            headers.insert(axum::http::header::HOST, header_value);
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to parse target host '{}' as header value: {}",
+                                target_host, e
+                            );
+                        }
+                    }
+                }
+                None => {
+                    warn!(
+                        "Failed to extract host from target URL '{}', Host header may be incorrect",
+                        target_url
+                    );
                 }
             }
 
@@ -307,7 +324,12 @@ impl ProxyService {
     }
 }
 
-/// Check if a header is a hop-by-hop header that should not be forwarded
+/// Check if a header is a hop-by-hop header that should not be forwarded.
+///
+/// Note: While RFC 7230 doesn't classify "host" as a hop-by-hop header,
+/// we include it here because the proxy must replace the Host header with
+/// the target server's host for HTTPS targets to work correctly.
+/// The Host header will be explicitly set from the target URL after filtering.
 fn is_hop_by_hop_header(name: &str) -> bool {
     matches!(
         name.to_lowercase().as_str(),
