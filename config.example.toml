@@ -38,6 +38,19 @@ path = "/metrics"
 enabled = true
 path = "/health"
 
+# Master Access Token Guard Configuration
+# When enabled, all requests must include a valid token in the specified header
+# to access the gateway. This protects the gateway from unauthorized access.
+# NOTE: This applies to ALL endpoints including /health and /metrics.
+# For internal monitoring without authentication, use a separate server instance.
+[master_access_token]
+enabled = false  # Set to true to enable the guard
+header_name = "Authorization"  # Header name to check for the token
+tokens = [
+    # "Bearer your-secret-token-1",
+    # "Bearer your-secret-token-2",
+]
+
 # Route configurations
 # Routes can have a `name` field to be referenced by servers
 # Target can be HTTP or HTTPS URLs
