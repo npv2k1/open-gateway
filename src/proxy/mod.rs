@@ -4,6 +4,7 @@
 //! - Path manipulation (strip prefix)
 //! - Header injection (API keys, custom headers)
 //! - Request/Response transformation
+//! - Support for both HTTP and HTTPS targets
 
 use crate::api_key::SharedApiKeySelector;
 use crate::config::RouteConfig;
@@ -11,6 +12,8 @@ use crate::metrics::GatewayMetrics;
 use axum::body::Body;
 use axum::http::{Request, Response, StatusCode};
 use http_body_util::BodyExt;
+use hyper_tls::HttpsConnector;
+use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use std::collections::HashMap;
@@ -21,7 +24,7 @@ use std::time::Instant;
 #[derive(Clone)]
 pub struct ProxyService {
     client: Client<
-        hyper_util::client::legacy::connect::HttpConnector,
+        HttpsConnector<HttpConnector>,
         http_body_util::combinators::BoxBody<bytes::Bytes, hyper::Error>,
     >,
     routes: Vec<ProxyRoute>,
@@ -130,9 +133,11 @@ impl ProxyRoute {
 }
 
 impl ProxyService {
-    /// Create a new proxy service
+    /// Create a new proxy service with support for both HTTP and HTTPS targets
     pub fn new(routes: Vec<ProxyRoute>, metrics: Arc<GatewayMetrics>) -> Self {
-        let client = Client::builder(TokioExecutor::new()).build_http();
+        // Create HTTPS connector that supports both HTTP and HTTPS
+        let https = HttpsConnector::new();
+        let client = Client::builder(TokioExecutor::new()).build(https);
 
         Self {
             client,
