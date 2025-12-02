@@ -15,6 +15,7 @@ use axum::http::{Request, Response, StatusCode};
 use http_body_util::BodyExt;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
+use percent_encoding::percent_decode_str;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -382,6 +383,7 @@ fn extract_host_from_url(url: &str) -> Option<String> {
 
 /// Extract api_key_pool from query parameters and return it along with the filtered query string.
 /// Returns (Option<pool_name>, Option<filtered_query_string>)
+/// Note: If multiple `api_key_pool` parameters are present, the last one takes precedence.
 fn extract_api_key_pool_from_query(query: Option<&str>) -> (Option<String>, Option<String>) {
     match query {
         None | Some("") => (None, None),
@@ -392,7 +394,12 @@ fn extract_api_key_pool_from_query(query: Option<&str>) -> (Option<String>, Opti
             for pair in q.split('&') {
                 if let Some((key, value)) = pair.split_once('=') {
                     if key == "api_key_pool" {
-                        api_key_pool = Some(value.to_string());
+                        // URL-decode the pool name to handle encoded characters
+                        api_key_pool = Some(
+                            percent_decode_str(value)
+                                .decode_utf8_lossy()
+                                .into_owned(),
+                        );
                     } else {
                         filtered_params.push(pair);
                     }
@@ -570,5 +577,21 @@ mod tests {
         let (pool, query) = extract_api_key_pool_from_query(Some("foo=bar&api_key_pool=default"));
         assert_eq!(pool, Some("default".to_string()));
         assert_eq!(query, Some("foo=bar".to_string()));
+    }
+
+    #[test]
+    fn test_extract_api_key_pool_from_query_url_encoded() {
+        // Test URL-encoded pool name (e.g., "my pool" encoded as "my%20pool")
+        let (pool, query) = extract_api_key_pool_from_query(Some("api_key_pool=my%20pool&foo=bar"));
+        assert_eq!(pool, Some("my pool".to_string()));
+        assert_eq!(query, Some("foo=bar".to_string()));
+    }
+
+    #[test]
+    fn test_extract_api_key_pool_from_query_multiple_pools() {
+        // When multiple api_key_pool params are present, the last one wins
+        let (pool, query) = extract_api_key_pool_from_query(Some("api_key_pool=pool1&api_key_pool=pool2"));
+        assert_eq!(pool, Some("pool2".to_string()));
+        assert_eq!(query, None);
     }
 }

@@ -1133,6 +1133,7 @@ dependencies = [
  "hyper-tls",
  "hyper-util",
  "notify",
+ "percent-encoding",
  "prometheus",
  "rand",
  "ratatui",
