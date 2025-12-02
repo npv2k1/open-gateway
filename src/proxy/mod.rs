@@ -25,7 +25,7 @@ use tracing::warn;
 #[derive(Clone)]
 pub struct ProxyService {
     client: Client<
-        HttpsConnector<HttpConnector>,
+        hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
         http_body_util::combinators::BoxBody<bytes::Bytes, hyper::Error>,
     >,
     routes: Vec<ProxyRoute>,
@@ -136,8 +136,15 @@ impl ProxyRoute {
 impl ProxyService {
     /// Create a new proxy service with support for both HTTP and HTTPS targets
     pub fn new(routes: Vec<ProxyRoute>, metrics: Arc<GatewayMetrics>) -> Self {
-        // Create HTTPS connector that supports both HTTP and HTTPS
-        let https = HttpsConnector::new();
+        // Create HTTPS connector with native roots
+        let https = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_native_roots()
+            .expect("Failed to load native root certificates")
+            .https_or_http()
+            .enable_http1()
+            .enable_http2()
+            .build();
+
         let client = Client::builder(TokioExecutor::new()).build(https);
 
         Self {
