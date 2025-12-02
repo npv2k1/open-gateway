@@ -5,7 +5,6 @@
 //! - Header injection (API keys, custom headers)
 //! - Request/Response transformation
 //! - Support for both HTTP and HTTPS targets
-//! - API key pool selection via query parameter (`api_key_pool=pool_name`)
 
 use crate::api_key::SharedApiKeySelector;
 use crate::config::RouteConfig;
@@ -15,7 +14,6 @@ use axum::http::{Request, Response, StatusCode};
 use http_body_util::BodyExt;
 use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
-use percent_encoding::percent_decode_str;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -30,8 +28,6 @@ pub struct ProxyService {
     >,
     routes: Vec<ProxyRoute>,
     metrics: Arc<GatewayMetrics>,
-    /// API key selectors for runtime lookup via query parameter
-    api_key_selectors: HashMap<String, SharedApiKeySelector>,
 }
 
 /// A compiled proxy route with its selector
@@ -137,11 +133,7 @@ impl ProxyRoute {
 
 impl ProxyService {
     /// Create a new proxy service with support for both HTTP and HTTPS targets
-    pub fn new(
-        routes: Vec<ProxyRoute>,
-        metrics: Arc<GatewayMetrics>,
-        api_key_selectors: HashMap<String, SharedApiKeySelector>,
-    ) -> Self {
+    pub fn new(routes: Vec<ProxyRoute>, metrics: Arc<GatewayMetrics>) -> Self {
         // Create HTTPS connector with native roots
         let https = hyper_rustls::HttpsConnectorBuilder::new()
             .with_native_roots()
@@ -157,7 +149,6 @@ impl ProxyService {
             client,
             routes,
             metrics,
-            api_key_selectors,
         }
     }
 
@@ -209,25 +200,18 @@ impl ProxyService {
                 (StatusCode::NOT_FOUND, "No matching route found".to_string())
             })?;
 
-        // Extract api_key_pool from query parameters and filter it out from forwarded query
+        // Get the query string
         let query = req.uri().query();
-        let (api_key_pool_override, filtered_query) = extract_api_key_pool_from_query(query);
 
-        // Determine which API key selector to use:
-        // 1. Query param override takes priority
-        // 2. Fall back to route's configured selector
-        let api_key_selector = api_key_pool_override
-            .as_ref()
-            .and_then(|pool_name| self.api_key_selectors.get(pool_name))
-            .or(route.api_key_selector.as_ref());
+        // Get the API key selector from route config
+        let api_key_selector = route.api_key_selector.as_ref();
 
         // Get the API key if a selector is configured
         let api_key = api_key_selector.and_then(|s| s.get_key().map(|k| k.to_string()));
 
-        // Build target URL with filtered query (without api_key_pool param)
-        // and optionally inject API key as query parameter
+        // Build target URL, optionally inject API key as query parameter
         let target_url = {
-            let base_url = route.get_target_url(&path, filtered_query.as_deref());
+            let base_url = route.get_target_url(&path, query);
 
             // If API key should be injected as query parameter, append it
             if let (Some(selector), Some(ref key)) = (api_key_selector, &api_key) {
@@ -409,47 +393,6 @@ fn extract_host_from_url(url: &str) -> Option<String> {
     None
 }
 
-/// Extract api_key_pool from query parameters and return it along with the filtered query string.
-/// Returns (Option<pool_name>, Option<filtered_query_string>)
-/// Note: If multiple `api_key_pool` parameters are present, the last one takes precedence.
-fn extract_api_key_pool_from_query(query: Option<&str>) -> (Option<String>, Option<String>) {
-    match query {
-        None | Some("") => (None, None),
-        Some(q) => {
-            let mut api_key_pool = None;
-            let mut filtered_params = Vec::new();
-
-            for pair in q.split('&') {
-                if let Some((key, value)) = pair.split_once('=') {
-                    if key == "api_key_pool" {
-                        // URL-decode the pool name to handle encoded characters
-                        api_key_pool = Some(
-                            percent_decode_str(value)
-                                .decode_utf8_lossy()
-                                .into_owned(),
-                        );
-                    } else {
-                        filtered_params.push(pair);
-                    }
-                } else {
-                    // Handle params without values (e.g., "flag" without "=value")
-                    if pair != "api_key_pool" {
-                        filtered_params.push(pair);
-                    }
-                }
-            }
-
-            let filtered_query = if filtered_params.is_empty() {
-                None
-            } else {
-                Some(filtered_params.join("&"))
-            };
-
-            (api_key_pool, filtered_query)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -556,70 +499,5 @@ mod tests {
         assert!(is_hop_by_hop_header("host"));
         assert!(is_hop_by_hop_header("Host"));
         assert!(is_hop_by_hop_header("HOST"));
-    }
-
-    #[test]
-    fn test_extract_api_key_pool_from_query_none() {
-        let (pool, query) = extract_api_key_pool_from_query(None);
-        assert_eq!(pool, None);
-        assert_eq!(query, None);
-    }
-
-    #[test]
-    fn test_extract_api_key_pool_from_query_empty() {
-        let (pool, query) = extract_api_key_pool_from_query(Some(""));
-        assert_eq!(pool, None);
-        assert_eq!(query, None);
-    }
-
-    #[test]
-    fn test_extract_api_key_pool_from_query_only_pool() {
-        let (pool, query) = extract_api_key_pool_from_query(Some("api_key_pool=openai"));
-        assert_eq!(pool, Some("openai".to_string()));
-        assert_eq!(query, None);
-    }
-
-    #[test]
-    fn test_extract_api_key_pool_from_query_with_other_params() {
-        let (pool, query) = extract_api_key_pool_from_query(Some("page=1&api_key_pool=openai&limit=10"));
-        assert_eq!(pool, Some("openai".to_string()));
-        assert_eq!(query, Some("page=1&limit=10".to_string()));
-    }
-
-    #[test]
-    fn test_extract_api_key_pool_from_query_no_pool() {
-        let (pool, query) = extract_api_key_pool_from_query(Some("page=1&limit=10"));
-        assert_eq!(pool, None);
-        assert_eq!(query, Some("page=1&limit=10".to_string()));
-    }
-
-    #[test]
-    fn test_extract_api_key_pool_from_query_pool_at_start() {
-        let (pool, query) = extract_api_key_pool_from_query(Some("api_key_pool=default&foo=bar"));
-        assert_eq!(pool, Some("default".to_string()));
-        assert_eq!(query, Some("foo=bar".to_string()));
-    }
-
-    #[test]
-    fn test_extract_api_key_pool_from_query_pool_at_end() {
-        let (pool, query) = extract_api_key_pool_from_query(Some("foo=bar&api_key_pool=default"));
-        assert_eq!(pool, Some("default".to_string()));
-        assert_eq!(query, Some("foo=bar".to_string()));
-    }
-
-    #[test]
-    fn test_extract_api_key_pool_from_query_url_encoded() {
-        // Test URL-encoded pool name (e.g., "my pool" encoded as "my%20pool")
-        let (pool, query) = extract_api_key_pool_from_query(Some("api_key_pool=my%20pool&foo=bar"));
-        assert_eq!(pool, Some("my pool".to_string()));
-        assert_eq!(query, Some("foo=bar".to_string()));
-    }
-
-    #[test]
-    fn test_extract_api_key_pool_from_query_multiple_pools() {
-        // When multiple api_key_pool params are present, the last one wins
-        let (pool, query) = extract_api_key_pool_from_query(Some("api_key_pool=pool1&api_key_pool=pool2"));
-        assert_eq!(pool, Some("pool2".to_string()));
-        assert_eq!(query, None);
     }
 }

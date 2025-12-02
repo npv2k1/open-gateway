@@ -10,7 +10,6 @@ A simple and fast API gateway service with API key management and TUI monitoring
   - Round Robin
   - Random
   - Weighted
-  - Dynamic pool selection via query parameter
 - 📊 **Prometheus Metrics**: Built-in metrics endpoint for monitoring
 - ❤️ **Health Checks**: Liveness and readiness endpoints
 - 🖥️ **TUI Monitor**: Terminal-based dashboard for monitoring
@@ -203,21 +202,6 @@ Use `[[servers]]` to configure multiple servers. Each server can have its own se
 | `key` | The API key value | Required |
 | `weight` | Weight for weighted selection | `1` |
 | `enabled` | Whether key is enabled | `true` |
-
-##### Dynamic API Key Pool Selection
-
-You can override the API key pool at request time by including the `api_key_pool` query parameter:
-
-```bash
-# Use the "openai" pool instead of the route's configured pool
-curl "http://localhost:8080/api/v1/chat?api_key_pool=openai"
-
-# The api_key_pool parameter is stripped from the forwarded request
-curl "http://localhost:8080/api/v1/users?page=1&api_key_pool=custom&limit=10"
-# Forwarded as: http://target/users?page=1&limit=10
-```
-
-**Note:** If the specified pool name doesn't exist in the configuration, the route's default pool is used as a fallback.
 
 ## Metrics
 
