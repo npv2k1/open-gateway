@@ -1,6 +1,10 @@
 # Open Gateway Configuration
 # This configuration shows both single-server (backward compatible) and
 # multi-server configurations. Use either `[server]` OR `[[servers]]`.
+#
+# Features:
+# - HTTP and HTTPS target support
+# - Hot reload: use `--watch` flag to auto-reload on config changes
 
 # Option 1: Single server configuration (backward compatible)
 # [server]
@@ -34,12 +38,26 @@ path = "/metrics"
 enabled = true
 path = "/health"
 
+# Master Access Token Guard Configuration
+# When enabled, all requests must include a valid token in the specified header
+# to access the gateway. This protects the gateway from unauthorized access.
+# NOTE: This applies to ALL endpoints including /health and /metrics.
+# For internal monitoring without authentication, use a separate server instance.
+[master_access_token]
+enabled = false  # Set to true to enable the guard
+header_name = "Authorization"  # Header name to check for the token
+tokens = [
+    # "Bearer your-secret-token-1",
+    # "Bearer your-secret-token-2",
+]
+
 # Route configurations
 # Routes can have a `name` field to be referenced by servers
+# Target can be HTTP or HTTPS URLs
 [[routes]]
 name = "api-v1"
 path = "/api/v1/*"
-target = "http://localhost:3001"
+target = "http://localhost:3001"  # HTTP target
 strip_prefix = true
 methods = ["GET", "POST", "PUT", "DELETE"]
 api_key_pool = "default"
@@ -49,9 +67,9 @@ enabled = true
 [[routes]]
 name = "api-v2"
 path = "/api/v2/*"
-target = "http://localhost:3002"
+target = "https://api.example.com"  # HTTPS target
 strip_prefix = true
-description = "API v2 routes"
+description = "API v2 routes (HTTPS)"
 enabled = true
 
 [[routes]]
