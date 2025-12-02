@@ -19,6 +19,8 @@ pub struct ApiKeySelector {
     strategy: ApiKeyStrategy,
     /// Header name for the API key
     pub header_name: String,
+    /// Query parameter name for the API key (optional)
+    pub query_param_name: Option<String>,
     /// Current index for round-robin selection
     round_robin_index: AtomicUsize,
     /// Total weight for weighted selection
@@ -35,6 +37,7 @@ impl ApiKeySelector {
             keys,
             strategy: pool.strategy.clone(),
             header_name: pool.header_name.clone(),
+            query_param_name: pool.query_param_name.clone(),
             round_robin_index: AtomicUsize::new(0),
             total_weight,
         }
@@ -139,6 +142,7 @@ mod tests {
             ],
             strategy,
             header_name: "X-API-Key".to_string(),
+            query_param_name: None,
         }
     }
 
@@ -200,6 +204,7 @@ mod tests {
             keys: vec![],
             strategy: ApiKeyStrategy::RoundRobin,
             header_name: "X-API-Key".to_string(),
+            query_param_name: None,
         };
         let selector = ApiKeySelector::new(&pool);
 

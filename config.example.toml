@@ -81,9 +81,10 @@ description = "Admin routes"
 enabled = true
 
 # API Key Pools
+# API keys can be injected as headers (header_name) or query parameters (query_param_name)
 [api_key_pools.default]
 strategy = "round_robin"  # Options: round_robin, random, weight
-header_name = "X-API-Key"
+header_name = "X-API-Key"  # Inject API key as header
 keys = [
     { key = "api-key-1", weight = 1, enabled = true },
     { key = "api-key-2", weight = 2, enabled = true },
@@ -96,4 +97,13 @@ header_name = "Authorization"
 keys = [
     { key = "Bearer sk-key-1", weight = 3, enabled = true },
     { key = "Bearer sk-key-2", weight = 1, enabled = true },
+]
+
+# Example: Inject API key as query parameter instead of header
+[api_key_pools.query_key]
+strategy = "round_robin"
+query_param_name = "api_key"  # Inject API key as query parameter: ?api_key=...
+keys = [
+    { key = "key-1", weight = 1, enabled = true },
+    { key = "key-2", weight = 1, enabled = true },
 ]
