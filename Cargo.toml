@@ -18,6 +18,7 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 hyper = { version = "1.5", features = ["full"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "http2", "tokio"] }
+hyper-rustls = { version = "0.27", features = ["http2"] }
 http-body-util = "0.1"
 bytes = "1.0"
 
