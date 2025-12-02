@@ -313,7 +313,11 @@ async fn run_servers(
             .collect();
 
         let proxy_routes = ProxyService::routes_from_config(&server_routes, &api_key_selectors);
-        let proxy = Arc::new(ProxyService::new(proxy_routes, metrics.clone()));
+        let proxy = Arc::new(ProxyService::new(
+            proxy_routes,
+            metrics.clone(),
+            api_key_selectors.clone(),
+        ));
 
         // Create app state for this server
         let state = AppState {
