@@ -50,9 +50,12 @@ pub struct ApiKeyPool {
     /// Selection strategy
     #[serde(default)]
     pub strategy: ApiKeyStrategy,
-    /// Header name to inject the API key
+    /// Header name to inject the API key (optional, used when injecting as header)
     #[serde(default = "default_header_name")]
     pub header_name: String,
+    /// Query parameter name to inject the API key (optional, used when injecting as query param)
+    #[serde(default)]
+    pub query_param_name: Option<String>,
 }
 
 fn default_header_name() -> String {

@@ -213,9 +213,6 @@ impl ProxyService {
         let query = req.uri().query();
         let (api_key_pool_override, filtered_query) = extract_api_key_pool_from_query(query);
 
-        // Build target URL with filtered query (without api_key_pool param)
-        let target_url = route.get_target_url(&path, filtered_query.as_deref());
-
         // Determine which API key selector to use:
         // 1. Query param override takes priority
         // 2. Fall back to route's configured selector
@@ -223,6 +220,34 @@ impl ProxyService {
             .as_ref()
             .and_then(|pool_name| self.api_key_selectors.get(pool_name))
             .or(route.api_key_selector.as_ref());
+
+        // Get the API key if a selector is configured
+        let api_key = api_key_selector.and_then(|s| s.get_key().map(|k| k.to_string()));
+
+        // Build target URL with filtered query (without api_key_pool param)
+        // and optionally inject API key as query parameter
+        let target_url = {
+            let base_url = route.get_target_url(&path, filtered_query.as_deref());
+
+            // If API key should be injected as query parameter, append it
+            if let (Some(selector), Some(ref key)) = (api_key_selector, &api_key) {
+                if let Some(ref query_param_name) = selector.query_param_name {
+                    // URL-encode the API key value for safe inclusion in query string
+                    let encoded_key =
+                        percent_encoding::utf8_percent_encode(key, percent_encoding::NON_ALPHANUMERIC)
+                            .to_string();
+                    if base_url.contains('?') {
+                        format!("{}&{}={}", base_url, query_param_name, encoded_key)
+                    } else {
+                        format!("{}?{}={}", base_url, query_param_name, encoded_key)
+                    }
+                } else {
+                    base_url
+                }
+            } else {
+                base_url
+            }
+        };
 
         // Build new request
         let (parts, body) = req.into_parts();
@@ -270,16 +295,19 @@ impl ProxyService {
                 }
             }
 
-            // Inject API key if configured (query param override or route config)
+            // Inject API key as header if configured (only when query_param_name is NOT set)
             if let Some(selector) = api_key_selector {
-                if let Some(api_key) = selector.get_key() {
-                    if let Ok(header_name) = selector
-                        .header_name
-                        .parse::<axum::http::header::HeaderName>()
-                    {
-                        if let Ok(header_value) = api_key.parse::<axum::http::header::HeaderValue>()
+                // Only inject as header if query_param_name is not set
+                if selector.query_param_name.is_none() {
+                    if let Some(ref key) = api_key {
+                        if let Ok(header_name) = selector
+                            .header_name
+                            .parse::<axum::http::header::HeaderName>()
                         {
-                            headers.insert(header_name, header_value);
+                            if let Ok(header_value) = key.parse::<axum::http::header::HeaderValue>()
+                            {
+                                headers.insert(header_name, header_value);
+                            }
                         }
                     }
                 }
