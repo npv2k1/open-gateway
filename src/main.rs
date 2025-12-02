@@ -6,6 +6,7 @@
 //! - Prometheus metrics
 //! - TUI monitoring
 //! - Master access token guard for gateway protection
+//! - Hot reload support when config file changes
 
 use axum::{
     body::Body,
@@ -17,6 +18,7 @@ use axum::{
     Json, Router,
 };
 use clap::{Parser, Subcommand};
+use notify::{Event, RecursiveMode, Watcher};
 use open_gateway::{
     api_key::{create_selector, SharedApiKeySelector},
     config::GatewayConfig,
@@ -28,9 +30,11 @@ use open_gateway::{
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
+use tokio::sync::watch;
 use tower_http::trace::TraceLayer;
-use tracing::{info, Level};
+use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 /// Open Gateway - A simple and fast API gateway service
@@ -49,6 +53,9 @@ enum Commands {
         /// Configuration file path
         #[arg(short, long, default_value = "config.toml")]
         config: String,
+        /// Watch config file for changes and hot reload
+        #[arg(short, long, default_value = "false")]
+        watch: bool,
     },
     /// Start the TUI monitor
     Monitor {
@@ -119,7 +126,7 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Start { config } => start_server(&config).await?,
+        Commands::Start { config, watch } => start_server(&config, watch).await?,
         Commands::Monitor { config } => start_monitor(&config).await?,
         Commands::Validate { config } => validate_config(&config)?,
         Commands::Init { output } => generate_sample_config(&output)?,
@@ -128,14 +135,143 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Start the gateway server
-async fn start_server(config_path: &str) -> anyhow::Result<()> {
+/// Start the gateway server with optional hot reload
+async fn start_server(config_path: &str, watch_config: bool) -> anyhow::Result<()> {
     // Setup logging
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
         .finish();
     tracing::subscriber::set_global_default(subscriber)?;
 
+    // Create a channel for shutdown signaling
+    let (shutdown_tx, _) = watch::channel(false);
+
+    // Start config file watcher if enabled
+    let config_path_owned = config_path.to_string();
+    let shutdown_tx_clone = shutdown_tx.clone();
+
+    if watch_config {
+        info!("Hot reload enabled - watching {} for changes", config_path);
+        let config_path_for_watcher = config_path_owned.clone();
+        tokio::spawn(async move {
+            watch_config_file(&config_path_for_watcher, shutdown_tx_clone).await;
+        });
+    }
+
+    // Run server loop (restarts on config change when watch is enabled)
+    loop {
+        let mut shutdown_rx = shutdown_tx.subscribe();
+
+        match run_servers(&config_path_owned, shutdown_rx.clone()).await {
+            Ok(()) => {
+                if watch_config {
+                    // Check if we got a shutdown signal (config changed)
+                    if *shutdown_rx.borrow() {
+                        info!("Config changed, reloading servers...");
+                        // Reset the shutdown signal for the next iteration
+                        let _ = shutdown_tx.send(false);
+                        continue;
+                    }
+                }
+                break;
+            }
+            Err(e) => {
+                error!("Server error: {}", e);
+                if watch_config {
+                    warn!("Waiting for config change to retry...");
+                    // Wait for config change before retrying
+                    loop {
+                        if shutdown_rx.changed().await.is_err() {
+                            return Err(e);
+                        }
+                        if *shutdown_rx.borrow() {
+                            let _ = shutdown_tx.send(false);
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                return Err(e);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Watch config file for changes and trigger reload
+async fn watch_config_file(config_path: &str, shutdown_tx: watch::Sender<bool>) {
+    let path = Path::new(config_path);
+    let parent_dir = path.parent().unwrap_or(Path::new("."));
+    let config_file_name = path
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<Event, notify::Error>>(10);
+
+    let mut watcher = match notify::recommended_watcher(move |res| {
+        // Use try_send to avoid blocking the file system event thread
+        // If the channel is full, we drop the event (the next event will still trigger reload)
+        let _ = tx.try_send(res);
+    }) {
+        Ok(w) => w,
+        Err(e) => {
+            error!("Failed to create file watcher: {}", e);
+            return;
+        }
+    };
+
+    if let Err(e) = watcher.watch(parent_dir, RecursiveMode::NonRecursive) {
+        error!("Failed to watch config directory: {}", e);
+        return;
+    }
+
+    info!("Watching {} for changes", config_path);
+
+    while let Some(result) = rx.recv().await {
+        match result {
+            Ok(event) => {
+                // Check if the event is for our config file
+                let is_config_file = event.paths.iter().any(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| n == config_file_name)
+                        .unwrap_or(false)
+                });
+
+                if is_config_file {
+                    match event.kind {
+                        notify::EventKind::Modify(_) | notify::EventKind::Create(_) => {
+                            // Validate new config before triggering reload
+                            match GatewayConfig::from_file(config_path) {
+                                Ok(_) => {
+                                    info!("Config file changed, triggering reload...");
+                                    let _ = shutdown_tx.send(true);
+                                }
+                                Err(e) => {
+                                    warn!("Config file changed but invalid: {}", e);
+                                    warn!("Keeping current configuration");
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Err(e) => {
+                error!("File watch error: {}", e);
+            }
+        }
+    }
+}
+
+/// Run all servers from configuration
+async fn run_servers(
+    config_path: &str,
+    mut shutdown_rx: watch::Receiver<bool>,
+) -> anyhow::Result<()> {
     // Load configuration
     let config = GatewayConfig::from_file(config_path)?;
     info!("Loaded configuration from {}", config_path);
@@ -221,18 +357,50 @@ async fn start_server(config_path: &str) -> anyhow::Result<()> {
             info!("  Metrics endpoint at {}", config.metrics.path);
         }
 
-        // Spawn the server task
+        // Spawn the server task with graceful shutdown support
+        let server_shutdown_rx = shutdown_rx.clone();
         let handle = tokio::spawn(async move {
             let listener = tokio::net::TcpListener::bind(addr).await?;
-            axum::serve(listener, app.into_make_service()).await?;
+            axum::serve(listener, app.into_make_service())
+                .with_graceful_shutdown(async move {
+                    let mut rx = server_shutdown_rx;
+                    loop {
+                        if rx.changed().await.is_err() {
+                            break;
+                        }
+                        if *rx.borrow() {
+                            break;
+                        }
+                    }
+                })
+                .await?;
             Ok::<(), anyhow::Error>(())
         });
         handles.push(handle);
     }
 
-    // Wait for all servers (in practice, they run forever unless there's an error)
-    for handle in handles {
-        handle.await??;
+    // Wait for shutdown signal or server error
+    tokio::select! {
+        _ = async {
+            loop {
+                if shutdown_rx.changed().await.is_err() {
+                    break;
+                }
+                if *shutdown_rx.borrow() {
+                    break;
+                }
+            }
+        } => {
+            info!("Shutdown signal received, stopping servers...");
+        }
+        result = async {
+            for handle in handles {
+                handle.await??;
+            }
+            Ok::<(), anyhow::Error>(())
+        } => {
+            return result;
+        }
     }
 
     Ok(())
@@ -334,6 +502,10 @@ fn generate_sample_config(output_path: &str) -> anyhow::Result<()> {
     let sample_config = r#"# Open Gateway Configuration
 # This configuration shows both single-server (backward compatible) and
 # multi-server configurations. Use either `[server]` OR `[[servers]]`.
+#
+# Features:
+# - HTTP and HTTPS target support
+# - Hot reload: use `--watch` flag to auto-reload on config changes
 
 # Option 1: Single server configuration (backward compatible)
 # [server]
@@ -382,10 +554,11 @@ tokens = [
 
 # Route configurations
 # Routes can have a `name` field to be referenced by servers
+# Target can be HTTP or HTTPS URLs
 [[routes]]
 name = "api-v1"
 path = "/api/v1/*"
-target = "http://localhost:3001"
+target = "http://localhost:3001"  # HTTP target
 strip_prefix = true
 methods = ["GET", "POST", "PUT", "DELETE"]
 api_key_pool = "default"
@@ -395,9 +568,9 @@ enabled = true
 [[routes]]
 name = "api-v2"
 path = "/api/v2/*"
-target = "http://localhost:3002"
+target = "https://api.example.com"  # HTTPS target
 strip_prefix = true
-description = "API v2 routes"
+description = "API v2 routes (HTTPS)"
 enabled = true
 
 [[routes]]
