@@ -189,8 +189,11 @@ Use `[[servers]]` to configure multiple servers. Each server can have its own se
 | Option | Description | Default |
 |--------|-------------|---------|
 | `strategy` | Selection strategy | `round_robin` |
-| `header_name` | Header name for API key | `Authorization` |
+| `header_name` | Header name for API key (used when injecting as header) | `Authorization` |
+| `query_param_name` | Query parameter name for API key (used when injecting as query param) | None |
 | `keys` | List of API keys | Required |
+
+**Note:** If `query_param_name` is set, the API key will be injected into the target URL's query parameters instead of as a header.
 
 ##### API Key Configuration
 
