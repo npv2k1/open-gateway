@@ -30,7 +30,7 @@ reqwest = { version = "0.12", features = ["json"] }
 toml = "0.8"
 
 # TUI
-ratatui = "0.24"
+ratatui = "0.29"
 crossterm = "0.27"
 
 # CLI
@@ -61,7 +61,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 
 # Metrics
-prometheus = "0.13"
+prometheus = "0.14"
 percent-encoding = "2.3.2"
 
 [dev-dependencies]
