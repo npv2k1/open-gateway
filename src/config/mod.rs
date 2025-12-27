@@ -624,7 +624,9 @@ target = "http://localhost:8081"
         let result = GatewayConfig::parse(toml);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("Master access token guard is enabled but no tokens are configured"));
+        assert!(err
+            .to_string()
+            .contains("Master access token guard is enabled but no tokens are configured"));
     }
 
     #[test]

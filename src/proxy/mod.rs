@@ -220,19 +220,17 @@ impl ProxyService {
 
             // Set Host header from target URL to ensure HTTPS targets work correctly
             match extract_host_from_url(&target_url) {
-                Some(target_host) => {
-                    match target_host.parse::<axum::http::header::HeaderValue>() {
-                        Ok(header_value) => {
-                            headers.insert(axum::http::header::HOST, header_value);
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to parse target host '{}' as header value: {}",
-                                target_host, e
-                            );
-                        }
+                Some(target_host) => match target_host.parse::<axum::http::header::HeaderValue>() {
+                    Ok(header_value) => {
+                        headers.insert(axum::http::header::HOST, header_value);
                     }
-                }
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse target host '{}' as header value: {}",
+                            target_host, e
+                        );
+                    }
+                },
                 None => {
                     warn!(
                         "Failed to extract host from target URL '{}', Host header may be incorrect",
