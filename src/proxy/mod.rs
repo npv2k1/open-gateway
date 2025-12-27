@@ -217,9 +217,11 @@ impl ProxyService {
             if let (Some(selector), Some(ref key)) = (api_key_selector, &api_key) {
                 if let Some(ref query_param_name) = selector.query_param_name {
                     // URL-encode the API key value for safe inclusion in query string
-                    let encoded_key =
-                        percent_encoding::utf8_percent_encode(key, percent_encoding::NON_ALPHANUMERIC)
-                            .to_string();
+                    let encoded_key = percent_encoding::utf8_percent_encode(
+                        key,
+                        percent_encoding::NON_ALPHANUMERIC,
+                    )
+                    .to_string();
                     if base_url.contains('?') {
                         format!("{}&{}={}", base_url, query_param_name, encoded_key)
                     } else {
