@@ -202,7 +202,7 @@ impl MonitorApp {
                 Constraint::Min(0),    // Content
                 Constraint::Length(3), // Status bar
             ])
-            .split(f.size());
+        .split(f.area());
 
         self.render_title(f, chunks[0]);
         self.render_tabs(f, chunks[1]);
