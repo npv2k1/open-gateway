@@ -131,6 +131,11 @@ impl GatewayMetrics {
 
     /// Hash an API key to protect credentials in metrics
     /// Returns a string representation of the hash for use in metrics
+    ///
+    /// Note: Uses DefaultHasher which is fast and suitable for metrics observability.
+    /// This is not intended for cryptographic security - the goal is to prevent
+    /// accidental exposure of raw API keys in monitoring systems while maintaining
+    /// the ability to track usage patterns.
     fn hash_api_key(api_key: &str) -> String {
         let mut hasher = DefaultHasher::new();
         api_key.hash(&mut hasher);
