@@ -1,5 +1,5 @@
 # Multi-stage build for minimal final image
-FROM rust:1.89-slim AS builder
+FROM rust:1.89-slim-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
