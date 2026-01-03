@@ -9,6 +9,8 @@
 use prometheus::{
     CounterVec, Encoder, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry, TextEncoder,
 };
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -118,10 +120,21 @@ impl GatewayMetrics {
     }
 
     /// Record API key usage for a route
+    /// Uses a hash of the API key to protect credentials while maintaining observability
     pub fn record_api_key_usage(&self, api_key: &str, route: &str) {
+        let api_key_hash = Self::hash_api_key(api_key);
+        let normalized_route = Self::normalize_path(route);
         self.api_key_usage_counter
-            .with_label_values(&[api_key, route])
+            .with_label_values(&[&api_key_hash, &normalized_route])
             .inc();
+    }
+
+    /// Hash an API key to protect credentials in metrics
+    /// Returns a string representation of the hash for use in metrics
+    fn hash_api_key(api_key: &str) -> String {
+        let mut hasher = DefaultHasher::new();
+        api_key.hash(&mut hasher);
+        format!("key_{:x}", hasher.finish())
     }
 
     /// Get the Prometheus metrics output
@@ -272,8 +285,25 @@ mod tests {
 
         let output = metrics.prometheus_output();
         assert!(output.contains("gateway_api_key_usage_total"));
-        // Check that key1 was recorded for /api/v1
-        assert!(output.contains("api_key=\"key1\""));
-        assert!(output.contains("api_key=\"key2\""));
+        // Check that hashed keys are recorded (not raw keys)
+        assert!(!output.contains("api_key=\"key1\""));
+        assert!(!output.contains("api_key=\"key2\""));
+        // Check that hashed versions exist
+        assert!(output.contains("api_key=\"key_"));
+    }
+
+    #[test]
+    fn test_hash_api_key() {
+        // Test that the same key produces the same hash
+        let hash1 = GatewayMetrics::hash_api_key("test-key");
+        let hash2 = GatewayMetrics::hash_api_key("test-key");
+        assert_eq!(hash1, hash2);
+
+        // Test that different keys produce different hashes
+        let hash3 = GatewayMetrics::hash_api_key("different-key");
+        assert_ne!(hash1, hash3);
+
+        // Test that hash format is correct
+        assert!(hash1.starts_with("key_"));
     }
 }
