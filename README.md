@@ -210,6 +210,7 @@ The gateway exposes Prometheus metrics at the `/metrics` endpoint (configurable)
 - `gateway_requests_total`: Total number of requests (labels: method, path, status)
 - `gateway_request_latency_seconds`: Request latency histogram (labels: method, path)
 - `gateway_active_connections`: Number of active connections (labels: route)
+- `gateway_api_key_usage_total`: Total number of requests per API key (labels: api_key, route)
 
 ## Health Checks
 

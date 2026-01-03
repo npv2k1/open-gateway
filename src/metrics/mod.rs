@@ -4,6 +4,7 @@
 //! - Request count by method, path, and status
 //! - Request latency histogram
 //! - Active connections gauge
+//! - API key usage counter
 
 use prometheus::{
     CounterVec, Encoder, GaugeVec, HistogramOpts, HistogramVec, Opts, Registry, TextEncoder,
@@ -19,6 +20,7 @@ pub struct GatewayMetrics {
     request_counter: CounterVec,
     request_latency: HistogramVec,
     active_connections: GaugeVec,
+    api_key_usage_counter: CounterVec,
     // Simple counters for TUI display
     total_requests: Arc<AtomicU64>,
     total_errors: Arc<AtomicU64>,
@@ -53,6 +55,12 @@ impl GatewayMetrics {
         )
         .expect("Failed to create active connections gauge");
 
+        let api_key_usage_counter = CounterVec::new(
+            Opts::new("gateway_api_key_usage_total", "Total number of requests per API key"),
+            &["api_key", "route"],
+        )
+        .expect("Failed to create API key usage counter");
+
         registry
             .register(Box::new(request_counter.clone()))
             .expect("Failed to register request counter");
@@ -62,12 +70,16 @@ impl GatewayMetrics {
         registry
             .register(Box::new(active_connections.clone()))
             .expect("Failed to register active connections");
+        registry
+            .register(Box::new(api_key_usage_counter.clone()))
+            .expect("Failed to register API key usage counter");
 
         Self {
             registry,
             request_counter,
             request_latency,
             active_connections,
+            api_key_usage_counter,
             total_requests: Arc::new(AtomicU64::new(0)),
             total_errors: Arc::new(AtomicU64::new(0)),
         }
@@ -103,6 +115,13 @@ impl GatewayMetrics {
     /// Decrement active connections for a route
     pub fn dec_active_connections(&self, route: &str) {
         self.active_connections.with_label_values(&[route]).dec();
+    }
+
+    /// Record API key usage for a route
+    pub fn record_api_key_usage(&self, api_key: &str, route: &str) {
+        self.api_key_usage_counter
+            .with_label_values(&[api_key, route])
+            .inc();
     }
 
     /// Get the Prometheus metrics output
@@ -239,5 +258,22 @@ mod tests {
         let output = metrics.prometheus_output();
         assert!(output.contains("gateway_requests_total"));
         assert!(output.contains("gateway_request_latency_seconds"));
+    }
+
+    #[test]
+    fn test_api_key_usage_counter() {
+        let metrics = GatewayMetrics::new();
+        
+        // Record some API key usages
+        metrics.record_api_key_usage("key1", "/api/v1");
+        metrics.record_api_key_usage("key1", "/api/v1");
+        metrics.record_api_key_usage("key2", "/api/v1");
+        metrics.record_api_key_usage("key1", "/api/v2");
+        
+        let output = metrics.prometheus_output();
+        assert!(output.contains("gateway_api_key_usage_total"));
+        // Check that key1 was recorded for /api/v1
+        assert!(output.contains("api_key=\"key1\""));
+        assert!(output.contains("api_key=\"key2\""));
     }
 }

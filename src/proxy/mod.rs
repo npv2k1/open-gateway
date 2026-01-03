@@ -338,6 +338,12 @@ impl ProxyService {
         self.metrics
             .record_request(&method, &path, status, start.elapsed());
 
+        // Record API key usage if an API key was used
+        if let Some(ref key) = api_key {
+            let route_name = route.name.as_deref().unwrap_or(&path);
+            self.metrics.record_api_key_usage(key, route_name);
+        }
+
         // Convert response body
         let (parts, body) = response.into_parts();
         let body_bytes = match http_body_util::BodyExt::collect(body).await {
