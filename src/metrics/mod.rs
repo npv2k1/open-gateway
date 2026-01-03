@@ -263,13 +263,13 @@ mod tests {
     #[test]
     fn test_api_key_usage_counter() {
         let metrics = GatewayMetrics::new();
-        
+
         // Record some API key usages
         metrics.record_api_key_usage("key1", "/api/v1");
         metrics.record_api_key_usage("key1", "/api/v1");
         metrics.record_api_key_usage("key2", "/api/v1");
         metrics.record_api_key_usage("key1", "/api/v2");
-        
+
         let output = metrics.prometheus_output();
         assert!(output.contains("gateway_api_key_usage_total"));
         // Check that key1 was recorded for /api/v1
