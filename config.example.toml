@@ -82,21 +82,22 @@ enabled = true
 
 # API Key Pools
 # API keys can be injected as headers (header_name) or query parameters (query_param_name)
+# Each key can have an optional name that will be used in metrics instead of a hash
 [api_key_pools.default]
 strategy = "round_robin"  # Options: round_robin, random, weight
 header_name = "X-API-Key"  # Inject API key as header
 keys = [
-    { key = "api-key-1", weight = 1, enabled = true },
-    { key = "api-key-2", weight = 2, enabled = true },
-    { key = "api-key-3", weight = 1, enabled = true },
+    { key = "api-key-1", name = "key-1", weight = 1, enabled = true },
+    { key = "api-key-2", name = "key-2", weight = 2, enabled = true },
+    { key = "api-key-3", name = "key-3", weight = 1, enabled = true },
 ]
 
 [api_key_pools.openai]
 strategy = "weight"
 header_name = "Authorization"
 keys = [
-    { key = "Bearer sk-key-1", weight = 3, enabled = true },
-    { key = "Bearer sk-key-2", weight = 1, enabled = true },
+    { key = "Bearer sk-key-1", name = "openai-prod", weight = 3, enabled = true },
+    { key = "Bearer sk-key-2", name = "openai-backup", weight = 1, enabled = true },
 ]
 
 # Example: Inject API key as query parameter instead of header
