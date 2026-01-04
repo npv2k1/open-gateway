@@ -139,8 +139,8 @@ enabled = true
 strategy = "round_robin"  # Options: round_robin, random, weight
 header_name = "X-API-Key"
 keys = [
-    { key = "api-key-1", weight = 1, enabled = true },
-    { key = "api-key-2", weight = 2, enabled = true },
+    { key = "api-key-1", name = "primary", weight = 1, enabled = true },
+    { key = "api-key-2", name = "secondary", weight = 2, enabled = true },
 ]
 ```
 
@@ -200,6 +200,7 @@ Use `[[servers]]` to configure multiple servers. Each server can have its own se
 | Option | Description | Default |
 |--------|-------------|---------|
 | `key` | The API key value | Required |
+| `name` | Optional name alias for the key (used in metrics labels) | None |
 | `weight` | Weight for weighted selection | `1` |
 | `enabled` | Whether key is enabled | `true` |
 
@@ -210,9 +211,9 @@ The gateway exposes Prometheus metrics at the `/metrics` endpoint (configurable)
 - `gateway_requests_total`: Total number of requests (labels: method, path, status)
 - `gateway_request_latency_seconds`: Request latency histogram (labels: method, path)
 - `gateway_active_connections`: Number of active connections (labels: route)
-- `gateway_api_key_usage_total`: Total number of requests per API key (labels: api_key (hashed), route)
+- `gateway_api_key_usage_total`: Total number of requests per API key (labels: api_key, route)
 
-**Note**: API keys are hashed before being used as metric labels to protect sensitive credentials while maintaining observability.
+**Note**: When an API key has a `name` configured, the name is used as the metric label. Otherwise, API keys are hashed before being used as metric labels to protect sensitive credentials while maintaining observability.
 
 ## Health Checks
 

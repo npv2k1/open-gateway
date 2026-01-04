@@ -25,6 +25,9 @@ pub enum ApiKeyStrategy {
 pub struct ApiKeyConfig {
     /// The API key value
     pub key: String,
+    /// Optional name alias for the key (used in metrics)
+    #[serde(default)]
+    pub name: Option<String>,
     /// Weight for weighted selection (default: 1)
     #[serde(default = "default_weight")]
     pub weight: u32,

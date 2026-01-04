@@ -120,12 +120,15 @@ impl GatewayMetrics {
     }
 
     /// Record API key usage for a route
-    /// Uses a hash of the API key to protect credentials while maintaining observability
-    pub fn record_api_key_usage(&self, api_key: &str, route: &str) {
-        let api_key_hash = Self::hash_api_key(api_key);
+    /// Uses the provided name if available, otherwise hashes the API key to protect credentials
+    /// while maintaining observability
+    pub fn record_api_key_usage(&self, api_key: &str, route: &str, key_name: Option<&str>) {
+        let api_key_label = key_name
+            .map(|name| name.to_string())
+            .unwrap_or_else(|| Self::hash_api_key(api_key));
         let normalized_route = Self::normalize_path(route);
         self.api_key_usage_counter
-            .with_label_values(&[&api_key_hash, &normalized_route])
+            .with_label_values(&[&api_key_label, &normalized_route])
             .inc();
     }
 
@@ -282,11 +285,11 @@ mod tests {
     fn test_api_key_usage_counter() {
         let metrics = GatewayMetrics::new();
 
-        // Record some API key usages
-        metrics.record_api_key_usage("key1", "/api/v1");
-        metrics.record_api_key_usage("key1", "/api/v1");
-        metrics.record_api_key_usage("key2", "/api/v1");
-        metrics.record_api_key_usage("key1", "/api/v2");
+        // Record some API key usages without names (should use hash)
+        metrics.record_api_key_usage("key1", "/api/v1", None);
+        metrics.record_api_key_usage("key1", "/api/v1", None);
+        metrics.record_api_key_usage("key2", "/api/v1", None);
+        metrics.record_api_key_usage("key1", "/api/v2", None);
 
         let output = metrics.prometheus_output();
         assert!(output.contains("gateway_api_key_usage_total"));
@@ -295,6 +298,27 @@ mod tests {
         assert!(!output.contains("api_key=\"key2\""));
         // Check that hashed versions exist
         assert!(output.contains("api_key=\"key_"));
+    }
+
+    #[test]
+    fn test_api_key_usage_with_name_alias() {
+        let metrics = GatewayMetrics::new();
+
+        // Record API key usages with name aliases
+        metrics.record_api_key_usage("secret-key-1", "/api/v1", Some("production-key"));
+        metrics.record_api_key_usage("secret-key-1", "/api/v1", Some("production-key"));
+        metrics.record_api_key_usage("secret-key-2", "/api/v2", Some("staging-key"));
+
+        let output = metrics.prometheus_output();
+        assert!(output.contains("gateway_api_key_usage_total"));
+        
+        // Check that name aliases are used (not raw keys or hashes)
+        assert!(output.contains("api_key=\"production-key\""));
+        assert!(output.contains("api_key=\"staging-key\""));
+        
+        // Check that secret keys are NOT exposed
+        assert!(!output.contains("secret-key-1"));
+        assert!(!output.contains("secret-key-2"));
     }
 
     #[test]
