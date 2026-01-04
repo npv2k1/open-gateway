@@ -650,4 +650,40 @@ target = "http://localhost:8081"
         assert!(!config.validate_token("any-token"));
         assert!(!config.validate_token(""));
     }
+
+    #[test]
+    fn test_api_key_with_name_alias() {
+        let toml = r#"
+[api_key_pools.default]
+strategy = "round_robin"
+header_name = "X-API-Key"
+keys = [
+    { key = "secret-key-1", name = "production-key", weight = 1, enabled = true },
+    { key = "secret-key-2", name = "staging-key", weight = 1, enabled = true },
+    { key = "secret-key-3", weight = 1, enabled = true },
+]
+
+[[routes]]
+path = "/api/*"
+target = "http://localhost:8081"
+api_key_pool = "default"
+"#;
+
+        let config = GatewayConfig::parse(toml).unwrap();
+        assert!(config.api_key_pools.contains_key("default"));
+        let pool = &config.api_key_pools["default"];
+        assert_eq!(pool.keys.len(), 3);
+        
+        // First key has name
+        assert_eq!(pool.keys[0].key, "secret-key-1");
+        assert_eq!(pool.keys[0].name, Some("production-key".to_string()));
+        
+        // Second key has name
+        assert_eq!(pool.keys[1].key, "secret-key-2");
+        assert_eq!(pool.keys[1].name, Some("staging-key".to_string()));
+        
+        // Third key has no name
+        assert_eq!(pool.keys[2].key, "secret-key-3");
+        assert_eq!(pool.keys[2].name, None);
+    }
 }
