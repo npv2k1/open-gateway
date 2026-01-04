@@ -94,7 +94,9 @@ impl ApiKeySelector {
         }
 
         // Fallback to last key (should not happen)
-        self.keys.last().map(|k| (k.key.as_str(), k.name.as_deref()))
+        self.keys
+            .last()
+            .map(|k| (k.key.as_str(), k.name.as_deref()))
     }
 
     /// Get the number of keys in the pool

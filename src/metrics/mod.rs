@@ -58,7 +58,10 @@ impl GatewayMetrics {
         .expect("Failed to create active connections gauge");
 
         let api_key_usage_counter = CounterVec::new(
-            Opts::new("gateway_api_key_usage_total", "Total number of requests per API key"),
+            Opts::new(
+                "gateway_api_key_usage_total",
+                "Total number of requests per API key",
+            ),
             &["api_key", "route"],
         )
         .expect("Failed to create API key usage counter");
@@ -311,11 +314,11 @@ mod tests {
 
         let output = metrics.prometheus_output();
         assert!(output.contains("gateway_api_key_usage_total"));
-        
+
         // Check that name aliases are used (not raw keys or hashes)
         assert!(output.contains("api_key=\"production-key\""));
         assert!(output.contains("api_key=\"staging-key\""));
-        
+
         // Check that secret keys are NOT exposed
         assert!(!output.contains("secret-key-1"));
         assert!(!output.contains("secret-key-2"));
