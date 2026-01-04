@@ -207,6 +207,9 @@ impl ProxyService {
         let api_key_selector = route.api_key_selector.as_ref();
 
         // Get the API key and its optional name if a selector is configured
+        // Note: We convert to owned strings here because the borrowed references
+        // from get_key_with_name() don't live long enough (they're borrowed from
+        // the selector which is behind an Option reference)
         let (api_key, api_key_name) = api_key_selector
             .and_then(|s| s.get_key_with_name())
             .map(|(key, name)| (Some(key.to_string()), name.map(|n| n.to_string())))

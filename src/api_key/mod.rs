@@ -77,6 +77,8 @@ impl ApiKeySelector {
     }
 
     /// Weighted selection with name
+    /// Returns a tuple of (key, optional_name)
+    /// If total_weight is 0, falls back to random selection
     fn get_weighted_with_name(&self) -> Option<(&str, Option<&str>)> {
         if self.total_weight == 0 {
             return self.get_random_with_name();
