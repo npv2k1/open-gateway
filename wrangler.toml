@@ -10,7 +10,7 @@ pages_build_output_dir = "docs"
 # cwd = ""
 
 [env.production]
-name = "open-gateway"
+name = "open-gateway-prod"
 
 [env.preview]
 name = "open-gateway-preview"
